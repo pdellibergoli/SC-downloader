@@ -5,6 +5,7 @@ import com.streamingcommunity.downloader.core.hls.AesSegmentDecryptor
 import com.streamingcommunity.downloader.core.hls.M3u8Parser
 import com.streamingcommunity.downloader.core.naming.NamingEngine
 import com.streamingcommunity.downloader.core.network.AnimeUnityClient
+import com.streamingcommunity.downloader.core.network.AppUpdateManager
 import com.streamingcommunity.downloader.core.network.DomainRecoveryManager
 import com.streamingcommunity.downloader.core.network.StreamingCommunityClient
 import com.streamingcommunity.downloader.core.network.VixcloudParser
@@ -12,6 +13,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -163,5 +165,41 @@ class CoreLogicTest {
         assertEquals("Attack on Titan", norm.name)
         assertTrue(norm.dubbed)
         assertTrue(norm.isSeries)
+    }
+
+    @Test
+    fun testAppUpdateVersionComparisonAndParsing() {
+        assertTrue(AppUpdateManager.isNewerVersion("1.0.0", "v1.0.1"))
+        assertTrue(AppUpdateManager.isNewerVersion("1.0.0", "1.1.0"))
+        assertTrue(AppUpdateManager.isNewerVersion("1.2.0-beta1", "1.2.0"))
+        assertFalse(AppUpdateManager.isNewerVersion("1.0.1", "v1.0.1"))
+        assertFalse(AppUpdateManager.isNewerVersion("1.2.0", "v1.1.9"))
+
+        val sampleReleaseJson = """
+            {
+              "tag_name": "v1.1.0",
+              "name": "SC Downloader v1.1.0",
+              "body": "- Filtro Home Film/Serie/Anime\n- Check aggiornamenti in-app",
+              "html_url": "https://github.com/pdellibergoli/SC-downloader/releases/tag/v1.1.0",
+              "published_at": "2026-11-09T12:00:00Z",
+              "assets": [
+                {
+                  "name": "SC-Downloader-v1.1.0.apk",
+                  "size": 15400123,
+                  "browser_download_url": "https://github.com/pdellibergoli/SC-downloader/releases/download/v1.1.0/SC-Downloader-v1.1.0.apk"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val parsed = AppUpdateManager.parseReleaseJson(sampleReleaseJson)
+        assertNotNull(parsed)
+        assertEquals("v1.1.0", parsed!!.tagName)
+        assertEquals("1.1.0", parsed.versionName)
+        assertEquals("SC-Downloader-v1.1.0.apk", parsed.apkFileName)
+        assertEquals(
+            "https://github.com/pdellibergoli/SC-downloader/releases/download/v1.1.0/SC-Downloader-v1.1.0.apk",
+            parsed.apkDownloadUrl
+        )
     }
 }

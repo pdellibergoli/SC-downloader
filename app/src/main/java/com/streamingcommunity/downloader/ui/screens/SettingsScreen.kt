@@ -15,8 +15,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -39,7 +41,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.streamingcommunity.downloader.BuildConfig
 import com.streamingcommunity.downloader.core.model.AppSettings
+import com.streamingcommunity.downloader.core.model.AppUpdateInfo
 import com.streamingcommunity.downloader.core.naming.NamingEngine
 import com.streamingcommunity.downloader.ui.theme.AccentCyan
 import kotlin.math.roundToInt
@@ -48,10 +52,15 @@ import kotlin.math.roundToInt
 fun SettingsScreen(
     settings: AppSettings,
     isCheckingDomain: Boolean,
+    isCheckingAppUpdate: Boolean,
+    availableUpdate: AppUpdateInfo?,
     onSaveScDomain: (String) -> Unit,
     onSaveAuDomain: (String) -> Unit,
     onSaveVideoHost: (String) -> Unit,
     onCheckDomainNow: () -> Unit,
+    onCheckAppUpdateNow: () -> Unit,
+    onOpenUpdateDialog: () -> Unit,
+    onOpenReleasesPage: () -> Unit,
     onUpdateSettings: ((AppSettings) -> AppSettings) -> Unit,
     onSaveNamingTemplate: (String, String) -> Unit
 ) {
@@ -76,6 +85,103 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.ExtraBold
             )
+        }
+
+        // 0. App Version & Updates
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Aggiornamenti App",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = AccentCyan
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Versione installata: v${BuildConfig.VERSION_NAME}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (availableUpdate != null) {
+                            Button(onClick = onOpenUpdateDialog) {
+                                Icon(
+                                    Icons.Default.SystemUpdate,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Aggiorna a v${availableUpdate.versionName}")
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Controllo automatico all'avvio", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Verifica all'apertura dell'app se è presente una nuova release su GitHub",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = settings.autoCheckAppUpdates,
+                            onCheckedChange = { enabled ->
+                                onUpdateSettings { it.copy(autoCheckAppUpdates = enabled) }
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = onCheckAppUpdateNow,
+                            enabled = !isCheckingAppUpdate
+                        ) {
+                            if (isCheckingAppUpdate) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.SystemUpdate,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Controlla aggiornamenti")
+                        }
+                        OutlinedButton(onClick = onOpenReleasesPage) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.OpenInNew,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("GitHub Releases")
+                        }
+                    }
+                }
+            }
         }
 
         // 1. Source Domains & Recovery

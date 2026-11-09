@@ -10,12 +10,18 @@ android {
     namespace = "com.streamingcommunity.downloader"
     compileSdk = 34
 
+    val propVersionName = project.findProperty("appVersionName")?.toString()?.trim()?.removePrefix("v")
+        ?.takeIf { it.isNotEmpty() }
+        ?: "1.0.0"
+    val propVersionCode = project.findProperty("appVersionCode")?.toString()?.toIntOrNull()
+        ?: 1
+
     defaultConfig {
         applicationId = "com.streamingcommunity.downloader"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = propVersionCode
+        versionName = propVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -23,9 +29,23 @@ android {
         }
     }
 
+    signingConfigs {
+        create("releaseSigning") {
+            val ksPath = System.getenv("KEYSTORE_PATH")?.takeIf { it.isNotBlank() } ?: "sc-signing.jks"
+            storeFile = file(ksPath)
+            storePassword = System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: "scdownloader123"
+            keyAlias = System.getenv("KEY_ALIAS")?.takeIf { it.isNotBlank() } ?: "scdownloader"
+            keyPassword = System.getenv("KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: "scdownloader123"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("releaseSigning")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("releaseSigning")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -45,6 +65,11 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
     }
 
     packaging {

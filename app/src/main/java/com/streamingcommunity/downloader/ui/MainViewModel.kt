@@ -3,8 +3,10 @@ package com.streamingcommunity.downloader.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.streamingcommunity.downloader.BuildConfig
 import com.streamingcommunity.downloader.SCApplication
 import com.streamingcommunity.downloader.core.model.AppSettings
+import com.streamingcommunity.downloader.core.model.AppUpdateInfo
 import com.streamingcommunity.downloader.core.model.AvailableTracks
 import com.streamingcommunity.downloader.core.model.DomainCandidate
 import com.streamingcommunity.downloader.core.model.EpisodeInfo
@@ -14,8 +16,10 @@ import com.streamingcommunity.downloader.core.model.Shelf
 import com.streamingcommunity.downloader.core.model.TitleMetadata
 import com.streamingcommunity.downloader.core.naming.NamingEngine
 import com.streamingcommunity.downloader.core.network.AnimeUnityClient
+import com.streamingcommunity.downloader.core.network.AppUpdateManager
 import com.streamingcommunity.downloader.core.network.DomainRecoveryManager
 import com.streamingcommunity.downloader.core.network.StreamingCommunityClient
+import com.streamingcommunity.downloader.core.network.UpdateCheckOutcome
 import com.streamingcommunity.downloader.core.network.VixcloudParser
 import com.streamingcommunity.downloader.data.DownloadJobEntity
 import com.streamingcommunity.downloader.data.WatchEntity
@@ -117,6 +121,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isCheckingDomain = MutableStateFlow(false)
     val isCheckingDomain: StateFlow<Boolean> = _isCheckingDomain.asStateFlow()
 
+    private val _isCheckingAppUpdate = MutableStateFlow(false)
+    val isCheckingAppUpdate: StateFlow<Boolean> = _isCheckingAppUpdate.asStateFlow()
+
+    private val _availableUpdate = MutableStateFlow<AppUpdateInfo?>(null)
+    val availableUpdate: StateFlow<AppUpdateInfo?> = _availableUpdate.asStateFlow()
+
+    private val _showUpdateDialog = MutableStateFlow(false)
+    val showUpdateDialog: StateFlow<Boolean> = _showUpdateDialog.asStateFlow()
+
+    private val _isDownloadingUpdate = MutableStateFlow(false)
+    val isDownloadingUpdate: StateFlow<Boolean> = _isDownloadingUpdate.asStateFlow()
+
+    private val _updateDownloadProgress = MutableStateFlow(0)
+    val updateDownloadProgress: StateFlow<Int> = _updateDownloadProgress.asStateFlow()
+
+    private val _downloadedUpdateFile = MutableStateFlow<File?>(null)
+    val downloadedUpdateFile: StateFlow<File?> = _downloadedUpdateFile.asStateFlow()
+
     private val _snackbarMessage = MutableSharedFlow<String>()
     val snackbarMessage: SharedFlow<String> = _snackbarMessage.asSharedFlow()
 
@@ -126,6 +148,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (_shelves.value.isEmpty() && _searchQuery.value.isBlank()) {
                     loadHomeShelves()
                 }
+            }
+        }
+        viewModelScope.launch {
+            val initialSettings = settingsRepository.getSettings()
+            if (initialSettings.autoCheckAppUpdates) {
+                checkAppUpdate(manual = false)
             }
         }
         refreshLocalLibrary()
@@ -844,6 +872,83 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 showMessage(e.message ?: "Modello non valido")
             }
+        }
+    }
+
+    fun checkAppUpdate(manual: Boolean = true) {
+        if (_isCheckingAppUpdate.value) return
+        viewModelScope.launch {
+            _isCheckingAppUpdate.value = true
+            try {
+                val currentVer = BuildConfig.VERSION_NAME
+                when (val outcome = AppUpdateManager.checkForUpdates(currentVer)) {
+                    is UpdateCheckOutcome.UpdateAvailable -> {
+                        val prevTag = _availableUpdate.value?.tagName
+                        _availableUpdate.value = outcome.info
+                        if (prevTag != outcome.info.tagName) {
+                            _downloadedUpdateFile.value = null
+                            _updateDownloadProgress.value = 0
+                        }
+                        _showUpdateDialog.value = true
+                    }
+                    is UpdateCheckOutcome.UpToDate -> {
+                        if (manual) {
+                            showMessage("Hai già l'ultima versione installata (v$currentVer)")
+                        }
+                    }
+                    is UpdateCheckOutcome.NoReleasesYet -> {
+                        if (manual) {
+                            showMessage("Nessuna release pubblicata su GitHub (versione attuale v$currentVer)")
+                        }
+                    }
+                    is UpdateCheckOutcome.Error -> {
+                        if (manual) {
+                            showMessage("Errore controllo aggiornamenti: ${outcome.message}")
+                        }
+                    }
+                }
+            } finally {
+                _isCheckingAppUpdate.value = false
+            }
+        }
+    }
+
+    fun downloadAppUpdate(onReadyToInstall: (File) -> Unit) {
+        val info = _availableUpdate.value ?: return
+        if (_isDownloadingUpdate.value) return
+
+        val existingFile = _downloadedUpdateFile.value
+        if (existingFile != null && existingFile.exists() && existingFile.length() > 0L) {
+            onReadyToInstall(existingFile)
+            return
+        }
+
+        viewModelScope.launch {
+            _isDownloadingUpdate.value = true
+            _updateDownloadProgress.value = 0
+            try {
+                val apkFile = AppUpdateManager.downloadApk(
+                    updateInfo = info,
+                    cacheDir = app.cacheDir,
+                    onProgress = { pct -> _updateDownloadProgress.value = pct }
+                )
+                _downloadedUpdateFile.value = apkFile
+                onReadyToInstall(apkFile)
+            } catch (e: Exception) {
+                showMessage(e.message ?: "Errore durante il download dell'aggiornamento")
+            } finally {
+                _isDownloadingUpdate.value = false
+            }
+        }
+    }
+
+    fun dismissUpdateDialog() {
+        _showUpdateDialog.value = false
+    }
+
+    fun openUpdateDialog() {
+        if (_availableUpdate.value != null) {
+            _showUpdateDialog.value = true
         }
     }
 }

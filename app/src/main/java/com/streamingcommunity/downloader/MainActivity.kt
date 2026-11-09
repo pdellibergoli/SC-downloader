@@ -14,21 +14,33 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -45,9 +57,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.streamingcommunity.downloader.core.model.DownloadStatus
+import com.streamingcommunity.downloader.core.network.AppUpdateManager
 import com.streamingcommunity.downloader.ui.MainViewModel
 import com.streamingcommunity.downloader.ui.screens.DownloadsScreen
 import com.streamingcommunity.downloader.ui.screens.ExploreScreen
@@ -62,9 +77,23 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
 
+    private var pendingApkToInstall: File? = null
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { }
+
+    private val unknownSourcesLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        val apk = pendingApkToInstall
+        if (apk != null && apk.exists()) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) {
+                pendingApkToInstall = null
+                launchApkInstallerIntent(apk)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -95,11 +124,113 @@ class MainActivity : ComponentActivity() {
                 val localFiles by viewModel.localFiles.collectAsState()
                 val isCheckingWatches by viewModel.isCheckingWatches.collectAsState()
                 val isCheckingDomain by viewModel.isCheckingDomain.collectAsState()
+                val isCheckingAppUpdate by viewModel.isCheckingAppUpdate.collectAsState()
+                val availableUpdate by viewModel.availableUpdate.collectAsState()
+                val showUpdateDialog by viewModel.showUpdateDialog.collectAsState()
+                val isDownloadingUpdate by viewModel.isDownloadingUpdate.collectAsState()
+                val updateDownloadProgress by viewModel.updateDownloadProgress.collectAsState()
+                val downloadedUpdateFile by viewModel.downloadedUpdateFile.collectAsState()
 
                 LaunchedEffect(Unit) {
                     viewModel.snackbarMessage.collect { msg ->
                         snackbarHostState.showSnackbar(msg)
                     }
+                }
+
+                val currentUpdate = availableUpdate
+                if (showUpdateDialog && currentUpdate != null) {
+                    AlertDialog(
+                        onDismissRequest = {
+                            if (!isDownloadingUpdate) {
+                                viewModel.dismissUpdateDialog()
+                            }
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Default.SystemUpdate,
+                                contentDescription = null
+                            )
+                        },
+                        title = {
+                            Text("Aggiornamento disponibile: v${currentUpdate.versionName}")
+                        },
+                        text = {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 320.dp)
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "${currentUpdate.title} (installata: v${BuildConfig.VERSION_NAME})",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = currentUpdate.releaseNotes,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                if (isDownloadingUpdate) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "Download APK in corso... $updateDownloadProgress%",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    LinearProgressIndicator(
+                                        progress = { (updateDownloadProgress / 100f).coerceIn(0f, 1f) },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            val readyFile = downloadedUpdateFile
+                            when {
+                                readyFile != null && readyFile.exists() -> {
+                                    Button(onClick = { installApk(readyFile) }) {
+                                        Text("Installa ora")
+                                    }
+                                }
+                                currentUpdate.apkDownloadUrl != null -> {
+                                    Button(
+                                        onClick = {
+                                            viewModel.downloadAppUpdate { apkFile ->
+                                                installApk(apkFile)
+                                            }
+                                        },
+                                        enabled = !isDownloadingUpdate
+                                    ) {
+                                        Text(if (isDownloadingUpdate) "Scaricamento..." else "Scarica e Installa")
+                                    }
+                                }
+                                else -> {
+                                    Button(onClick = { openExternalUrl(currentUpdate.htmlUrl) }) {
+                                        Text("Apri su GitHub")
+                                    }
+                                }
+                            }
+                        },
+                        dismissButton = {
+                            Row {
+                                if (currentUpdate.apkDownloadUrl != null) {
+                                    TextButton(
+                                        onClick = { openExternalUrl(currentUpdate.htmlUrl) },
+                                        enabled = !isDownloadingUpdate
+                                    ) {
+                                        Text("GitHub")
+                                    }
+                                }
+                                TextButton(
+                                    onClick = { viewModel.dismissUpdateDialog() },
+                                    enabled = !isDownloadingUpdate
+                                ) {
+                                    Text("Più tardi")
+                                }
+                            }
+                        }
+                    )
                 }
 
                 if (showBatteryDialog && !isIgnoringBatteryOptimizations()) {
@@ -206,7 +337,17 @@ class MainActivity : ComponentActivity() {
                                     selectedTab = 4
                                     viewModel.closeTitleDetail()
                                 },
-                                icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                                icon = {
+                                    BadgedBox(
+                                        badge = {
+                                            if (availableUpdate != null) {
+                                                Badge { Text("!") }
+                                            }
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.Settings, contentDescription = null)
+                                    }
+                                },
                                 label = { Text("Impostazioni") }
                             )
                         }
@@ -272,10 +413,15 @@ class MainActivity : ComponentActivity() {
                             4 -> SettingsScreen(
                                 settings = settings,
                                 isCheckingDomain = isCheckingDomain,
+                                isCheckingAppUpdate = isCheckingAppUpdate,
+                                availableUpdate = availableUpdate,
                                 onSaveScDomain = viewModel::saveAndVerifyStreamingCommunityDomain,
                                 onSaveAuDomain = viewModel::saveAndVerifyAnimeUnityDomain,
                                 onSaveVideoHost = viewModel::saveAndVerifyVideoHost,
                                 onCheckDomainNow = viewModel::checkDomainRecoveryNow,
+                                onCheckAppUpdateNow = { viewModel.checkAppUpdate(manual = true) },
+                                onOpenUpdateDialog = viewModel::openUpdateDialog,
+                                onOpenReleasesPage = { openExternalUrl(AppUpdateManager.RELEASES_PAGE_URL) },
                                 onUpdateSettings = viewModel::updateSettings,
                                 onSaveNamingTemplate = viewModel::saveNamingTemplate
                             )
@@ -349,6 +495,54 @@ class MainActivity : ComponentActivity() {
         }
         if (perms.isNotEmpty()) {
             permissionLauncher.launch(perms.toTypedArray())
+        }
+    }
+
+    private fun installApk(apkFile: File) {
+        if (!apkFile.exists()) {
+            viewModel.showMessage("File APK non trovato")
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            pendingApkToInstall = apkFile
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                unknownSourcesLauncher.launch(intent)
+                viewModel.showMessage("Consenti l'installazione da questa sorgente per aggiornare l'app")
+            } catch (e: Exception) {
+                viewModel.showMessage("Abilita l'installazione di app sconosciute nelle Impostazioni")
+            }
+            return
+        }
+        launchApkInstallerIntent(apkFile)
+    }
+
+    private fun launchApkInstallerIntent(apkFile: File) {
+        try {
+            val uri = FileProvider.getUriForFile(
+                this,
+                "${applicationContext.packageName}.fileprovider",
+                apkFile
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            viewModel.showMessage("Impossibile avviare l'installazione dell'APK: ${e.message}")
+        }
+    }
+
+    private fun openExternalUrl(url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            startActivity(intent)
+        } catch (e: Exception) {
+            viewModel.showMessage("Impossibile aprire il browser")
         }
     }
 

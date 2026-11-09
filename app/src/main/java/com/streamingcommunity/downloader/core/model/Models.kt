@@ -155,6 +155,19 @@ data class DomainCheckResult(
 )
 
 @Serializable
+data class AppUpdateInfo(
+    val tagName: String,
+    val versionName: String,
+    val title: String,
+    val releaseNotes: String,
+    val htmlUrl: String,
+    val apkDownloadUrl: String? = null,
+    val apkFileName: String? = null,
+    val apkSizeBytes: Long = 0L,
+    val publishedAt: String? = null
+)
+
+@Serializable
 data class AppSettings(
     val domain: String = "",
     val animeUnityDomain: String = "www.animeunity.co",
@@ -165,6 +178,7 @@ data class AppSettings(
     val domainAutoCheckEnabled: Boolean = true,
     val domainAutoApply: Boolean = false,
     val domainCheckIntervalMinutes: Int = 360,
+    val autoCheckAppUpdates: Boolean = true,
     val outputContainer: String = "mp4", // "mp4" or "mkv"
     val subtitleMode: String = "embed", // "embed" or "external"
     val namingTemplates: Map<String, String> = DEFAULT_NAMING_TEMPLATES
