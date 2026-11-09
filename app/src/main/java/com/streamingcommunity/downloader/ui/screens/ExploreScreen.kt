@@ -352,30 +352,58 @@ fun ExploreScreen(
             }
 
             else -> {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp)
-                ) {
-                    items(shelves, key = { it.key }) { shelf ->
-                        Column {
-                            Text(
-                                text = shelf.title,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                            )
-                            LazyRow(
-                                contentPadding = PaddingValues(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                items(shelf.items, key = { "${shelf.key}_${it.id}" }) { item ->
-                                    MediaPosterCard(
-                                        item = item,
-                                        domain = domain,
-                                        modifier = Modifier.width(130.dp),
-                                        onClick = { onOpenTitle(item) }
-                                    )
+                val filteredShelves = shelves.mapNotNull { shelf ->
+                    val matchingItems = shelf.items.filter { item ->
+                        val typeMatch = when {
+                            mediaTypeFilter == null -> true
+                            selectedSource == MediaSource.STREAMING_COMMUNITY ->
+                                item.type.equals(mediaTypeFilter, ignoreCase = true)
+                            else ->
+                                item.mediaType.equals(mediaTypeFilter, ignoreCase = true)
+                        }
+                        val dubMatch = if (selectedSource == MediaSource.ANIME_UNITY && dubbedOnlyFilter) {
+                            item.dubbed
+                        } else {
+                            true
+                        }
+                        typeMatch && dubMatch
+                    }
+                    if (matchingItems.isEmpty()) null else shelf.copy(items = matchingItems)
+                }
+
+                if (filteredShelves.isEmpty() && shelves.isNotEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "Nessun titolo nella Home corrisponde al filtro selezionato",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(20.dp)
+                    ) {
+                        items(filteredShelves, key = { it.key }) { shelf ->
+                            Column {
+                                Text(
+                                    text = shelf.title,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                )
+                                LazyRow(
+                                    contentPadding = PaddingValues(horizontal = 16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    items(shelf.items, key = { "${shelf.key}_${it.id}" }) { item ->
+                                        MediaPosterCard(
+                                            item = item,
+                                            domain = domain,
+                                            modifier = Modifier.width(130.dp),
+                                            onClick = { onOpenTitle(item) }
+                                        )
+                                    }
                                 }
                             }
                         }
