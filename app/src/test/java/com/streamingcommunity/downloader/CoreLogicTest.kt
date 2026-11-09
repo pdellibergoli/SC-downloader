@@ -184,6 +184,7 @@ class CoreLogicTest {
               "published_at": "2026-11-09T12:00:00Z",
               "assets": [
                 {
+                  "url": "https://api.github.com/repos/pdellibergoli/SC-downloader/releases/assets/727207717",
                   "name": "SC-Downloader-v1.1.0.apk",
                   "size": 15400123,
                   "browser_download_url": "https://github.com/pdellibergoli/SC-downloader/releases/download/v1.1.0/SC-Downloader-v1.1.0.apk"
@@ -198,7 +199,7 @@ class CoreLogicTest {
         assertEquals("1.1.0", parsed.versionName)
         assertEquals("SC-Downloader-v1.1.0.apk", parsed.apkFileName)
         assertEquals(
-            "https://github.com/pdellibergoli/SC-downloader/releases/download/v1.1.0/SC-Downloader-v1.1.0.apk",
+            "https://api.github.com/repos/pdellibergoli/SC-downloader/releases/assets/727207717",
             parsed.apkDownloadUrl
         )
     }

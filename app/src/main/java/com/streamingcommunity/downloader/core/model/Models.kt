@@ -179,6 +179,7 @@ data class AppSettings(
     val domainAutoApply: Boolean = false,
     val domainCheckIntervalMinutes: Int = 360,
     val autoCheckAppUpdates: Boolean = true,
+    val githubToken: String = "",
     val outputContainer: String = "mp4", // "mp4" or "mkv"
     val subtitleMode: String = "embed", // "embed" or "external"
     val namingTemplates: Map<String, String> = DEFAULT_NAMING_TEMPLATES

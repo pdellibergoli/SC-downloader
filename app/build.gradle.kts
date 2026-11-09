@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -6,15 +8,28 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) {
+        f.inputStream().use { load(it) }
+    }
+}
+
 android {
     namespace = "com.streamingcommunity.downloader"
     compileSdk = 34
 
     val propVersionName = project.findProperty("appVersionName")?.toString()?.trim()?.removePrefix("v")
         ?.takeIf { it.isNotEmpty() }
-        ?: "1.0.0"
+        ?: "1.0.1"
     val propVersionCode = project.findProperty("appVersionCode")?.toString()?.toIntOrNull()
-        ?: 1
+        ?: 10001
+    val defaultGithubToken = (
+        project.findProperty("githubToken")?.toString()?.trim()
+            ?: System.getenv("APP_UPDATE_TOKEN")?.trim()
+            ?: localProps.getProperty("github.token")?.trim()
+            ?: ""
+        ).replace("\"", "\\\"")
 
     defaultConfig {
         applicationId = "com.streamingcommunity.downloader"
@@ -22,6 +37,8 @@ android {
         targetSdk = 34
         versionCode = propVersionCode
         versionName = propVersionName
+
+        buildConfigField("String", "DEFAULT_GITHUB_TOKEN", "\"$defaultGithubToken\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

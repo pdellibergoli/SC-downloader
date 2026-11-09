@@ -875,13 +875,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun saveGithubToken(rawToken: String) {
+        viewModelScope.launch {
+            settingsRepository.updateGithubToken(rawToken)
+            showMessage(
+                if (rawToken.trim().isEmpty()) {
+                    "Token GitHub personalizzato rimosso"
+                } else {
+                    "Token GitHub salvato"
+                }
+            )
+            checkAppUpdate(manual = true)
+        }
+    }
+
     fun checkAppUpdate(manual: Boolean = true) {
         if (_isCheckingAppUpdate.value) return
         viewModelScope.launch {
             _isCheckingAppUpdate.value = true
             try {
                 val currentVer = BuildConfig.VERSION_NAME
-                when (val outcome = AppUpdateManager.checkForUpdates(currentVer)) {
+                val userToken = settingsRepository.getSettings().githubToken
+                when (val outcome = AppUpdateManager.checkForUpdates(currentVer, userToken)) {
                     is UpdateCheckOutcome.UpdateAvailable -> {
                         val prevTag = _availableUpdate.value?.tagName
                         _availableUpdate.value = outcome.info
@@ -927,9 +942,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isDownloadingUpdate.value = true
             _updateDownloadProgress.value = 0
             try {
+                val userToken = settingsRepository.getSettings().githubToken
                 val apkFile = AppUpdateManager.downloadApk(
                     updateInfo = info,
                     cacheDir = app.cacheDir,
+                    userGithubToken = userToken,
                     onProgress = { pct -> _updateDownloadProgress.value = pct }
                 )
                 _downloadedUpdateFile.value = apkFile

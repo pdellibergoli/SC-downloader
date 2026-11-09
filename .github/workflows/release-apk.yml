@@ -60,6 +60,8 @@ jobs:
         run: ./gradlew testDebugUnitTest --no-daemon
 
       - name: Build signed Release APK
+        env:
+          APP_UPDATE_TOKEN: ${{ secrets.APP_UPDATE_TOKEN }}
         run: |
           ./gradlew assembleRelease \
             -PappVersionName="${{ steps.version.outputs.version_name }}" \

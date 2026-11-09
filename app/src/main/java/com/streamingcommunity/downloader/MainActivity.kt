@@ -418,6 +418,7 @@ class MainActivity : ComponentActivity() {
                                 onSaveScDomain = viewModel::saveAndVerifyStreamingCommunityDomain,
                                 onSaveAuDomain = viewModel::saveAndVerifyAnimeUnityDomain,
                                 onSaveVideoHost = viewModel::saveAndVerifyVideoHost,
+                                onSaveGithubToken = viewModel::saveGithubToken,
                                 onCheckDomainNow = viewModel::checkDomainRecoveryNow,
                                 onCheckAppUpdateNow = { viewModel.checkAppUpdate(manual = true) },
                                 onOpenUpdateDialog = viewModel::openUpdateDialog,

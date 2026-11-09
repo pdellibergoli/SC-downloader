@@ -32,6 +32,7 @@ class SettingsRepository(private val context: Context) {
         private val KEY_DOMAIN_AUTO_APPLY = booleanPreferencesKey("domain_auto_apply")
         private val KEY_DOMAIN_CHECK_INTERVAL_MIN = intPreferencesKey("domain_check_interval_minutes")
         private val KEY_AUTO_CHECK_APP_UPDATES = booleanPreferencesKey("auto_check_app_updates")
+        private val KEY_GITHUB_TOKEN = stringPreferencesKey("github_token")
         private val KEY_OUTPUT_CONTAINER = stringPreferencesKey("output_container")
         private val KEY_SUBTITLE_MODE = stringPreferencesKey("subtitle_mode")
         private val KEY_NAMING_TEMPLATES = stringPreferencesKey("naming_templates_json")
@@ -65,6 +66,7 @@ class SettingsRepository(private val context: Context) {
             domainAutoApply = prefs[KEY_DOMAIN_AUTO_APPLY] ?: false,
             domainCheckIntervalMinutes = (prefs[KEY_DOMAIN_CHECK_INTERVAL_MIN] ?: 360).coerceAtLeast(30),
             autoCheckAppUpdates = prefs[KEY_AUTO_CHECK_APP_UPDATES] ?: true,
+            githubToken = prefs[KEY_GITHUB_TOKEN]?.trim().orEmpty(),
             outputContainer = prefs[KEY_OUTPUT_CONTAINER]?.lowercase()
                 ?.takeIf { it in listOf("mp4", "mkv") } ?: "mp4",
             subtitleMode = prefs[KEY_SUBTITLE_MODE]?.lowercase()
@@ -95,6 +97,12 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun updateGithubToken(token: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_GITHUB_TOKEN] = token.trim()
+        }
+    }
+
     suspend fun updateSettings(transform: (AppSettings) -> AppSettings) {
         val current = getSettings()
         val updated = transform(current)
@@ -110,6 +118,7 @@ class SettingsRepository(private val context: Context) {
             prefs[KEY_DOMAIN_AUTO_APPLY] = updated.domainAutoApply
             prefs[KEY_DOMAIN_CHECK_INTERVAL_MIN] = updated.domainCheckIntervalMinutes.coerceAtLeast(30)
             prefs[KEY_AUTO_CHECK_APP_UPDATES] = updated.autoCheckAppUpdates
+            prefs[KEY_GITHUB_TOKEN] = updated.githubToken.trim()
             prefs[KEY_OUTPUT_CONTAINER] = updated.outputContainer
             prefs[KEY_SUBTITLE_MODE] = updated.subtitleMode
             prefs[KEY_NAMING_TEMPLATES] = json.encodeToString(updated.namingTemplates)

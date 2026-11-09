@@ -45,6 +45,7 @@ import com.streamingcommunity.downloader.BuildConfig
 import com.streamingcommunity.downloader.core.model.AppSettings
 import com.streamingcommunity.downloader.core.model.AppUpdateInfo
 import com.streamingcommunity.downloader.core.naming.NamingEngine
+import com.streamingcommunity.downloader.core.network.AppUpdateManager
 import com.streamingcommunity.downloader.ui.theme.AccentCyan
 import kotlin.math.roundToInt
 
@@ -57,6 +58,7 @@ fun SettingsScreen(
     onSaveScDomain: (String) -> Unit,
     onSaveAuDomain: (String) -> Unit,
     onSaveVideoHost: (String) -> Unit,
+    onSaveGithubToken: (String) -> Unit,
     onCheckDomainNow: () -> Unit,
     onCheckAppUpdateNow: () -> Unit,
     onOpenUpdateDialog: () -> Unit,
@@ -67,10 +69,12 @@ fun SettingsScreen(
     var scDomainInput by remember { mutableStateOf(settings.domain) }
     var auDomainInput by remember { mutableStateOf(settings.animeUnityDomain) }
     var videoHostInput by remember { mutableStateOf(settings.videoHost) }
+    var githubTokenInput by remember { mutableStateOf(settings.githubToken) }
 
     LaunchedEffect(settings.domain) { scDomainInput = settings.domain }
     LaunchedEffect(settings.animeUnityDomain) { auDomainInput = settings.animeUnityDomain }
     LaunchedEffect(settings.videoHost) { videoHostInput = settings.videoHost }
+    LaunchedEffect(settings.githubToken) { githubTokenInput = settings.githubToken }
 
     LazyColumn(
         modifier = Modifier
@@ -147,6 +151,43 @@ fun SettingsScreen(
                                 onUpdateSettings { it.copy(autoCheckAppUpdates = enabled) }
                             }
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val hasBuiltIn = AppUpdateManager.hasBuiltInToken()
+                    OutlinedTextField(
+                        value = githubTokenInput,
+                        onValueChange = { githubTokenInput = it },
+                        label = { Text("Token GitHub (per repo privato)") },
+                        placeholder = {
+                            Text(
+                                if (hasBuiltIn) "Preconfigurato nella build (opzionale override)"
+                                else "ghp_... oppure github_pat_..."
+                            )
+                        },
+                        supportingText = {
+                            Text(
+                                if (hasBuiltIn && githubTokenInput.isBlank()) {
+                                    "Token preconfigurato attivo per pdellibergoli/SC-downloader"
+                                } else {
+                                    "Richiesto per leggere e scaricare le release dal repository privato"
+                                }
+                            )
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { onSaveGithubToken(githubTokenInput) }) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Salva Token")
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))

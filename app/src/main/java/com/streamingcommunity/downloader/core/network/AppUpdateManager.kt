@@ -1,5 +1,6 @@
 package com.streamingcommunity.downloader.core.network
 
+import com.streamingcommunity.downloader.BuildConfig
 import com.streamingcommunity.downloader.core.model.AppUpdateInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -8,7 +9,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -34,6 +34,16 @@ object AppUpdateManager {
         "https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases/latest"
 
     private val json = Json { ignoreUnknownKeys = true }
+
+    fun resolveEffectiveToken(userToken: String = ""): String {
+        val cleanUser = userToken.trim()
+        if (cleanUser.isNotEmpty()) return cleanUser
+        return runCatching { BuildConfig.DEFAULT_GITHUB_TOKEN.trim() }.getOrDefault("")
+    }
+
+    fun hasBuiltInToken(): Boolean {
+        return runCatching { BuildConfig.DEFAULT_GITHUB_TOKEN.isNotBlank() }.getOrDefault(false)
+    }
 
     fun normalizeVersion(raw: String): String {
         return raw.trim()
@@ -103,7 +113,12 @@ object AppUpdateManager {
             name.endsWith(".apk", ignoreCase = true)
         }
 
-        val apkDownloadUrl = apkAsset?.get("browser_download_url")?.jsonPrimitive?.contentOrNull
+        // Prefer the GitHub API asset endpoint (`url`) so private repository downloads work
+        // with `Accept: application/octet-stream` + `Authorization: Bearer <token>`,
+        // falling back to `browser_download_url` if `url` is absent.
+        val apiAssetUrl = apkAsset?.get("url")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        val browserDownloadUrl = apkAsset?.get("browser_download_url")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        val apkDownloadUrl = apiAssetUrl ?: browserDownloadUrl
         val apkFileName = apkAsset?.get("name")?.jsonPrimitive?.contentOrNull
         val apkSizeBytes = apkAsset?.get("size")?.jsonPrimitive?.longOrNull ?: 0L
 
@@ -120,17 +135,30 @@ object AppUpdateManager {
         )
     }
 
-    suspend fun checkForUpdates(currentVersion: String): UpdateCheckOutcome = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdates(
+        currentVersion: String,
+        userGithubToken: String = ""
+    ): UpdateCheckOutcome = withContext(Dispatchers.IO) {
         try {
-            val req = Request.Builder()
+            val token = resolveEffectiveToken(userGithubToken)
+            val reqBuilder = Request.Builder()
                 .url(LATEST_RELEASE_API_URL)
                 .header("Accept", "application/vnd.github+json")
                 .header("User-Agent", "SC-Downloader-Android/$currentVersion")
-                .build()
+            if (token.isNotEmpty()) {
+                reqBuilder.header("Authorization", "Bearer $token")
+            }
 
-            HttpClientProvider.sharedClient.newCall(req).execute().use { response ->
+            HttpClientProvider.sharedClient.newCall(reqBuilder.build()).execute().use { response ->
                 if (response.code == 404) {
-                    return@withContext UpdateCheckOutcome.NoReleasesYet(currentVersion)
+                    return@withContext if (token.isEmpty()) {
+                        UpdateCheckOutcome.Error("Repository privato: configura il Token GitHub nelle Impostazioni")
+                    } else {
+                        UpdateCheckOutcome.NoReleasesYet(currentVersion)
+                    }
+                }
+                if (response.code == 401 || response.code == 403) {
+                    return@withContext UpdateCheckOutcome.Error("Token GitHub non valido o scaduto (HTTP ${response.code})")
                 }
                 if (!response.isSuccessful) {
                     return@withContext UpdateCheckOutcome.Error("GitHub API HTTP ${response.code}")
@@ -153,11 +181,13 @@ object AppUpdateManager {
     suspend fun downloadApk(
         updateInfo: AppUpdateInfo,
         cacheDir: File,
+        userGithubToken: String = "",
         onProgress: (percent: Int) -> Unit
     ): File = withContext(Dispatchers.IO) {
         val downloadUrl = updateInfo.apkDownloadUrl
             ?: throw IOException("Nessun file APK allegato alla release ${updateInfo.tagName}")
 
+        val token = resolveEffectiveToken(userGithubToken)
         val updatesDir = File(cacheDir, "updates").apply { mkdirs() }
         val safeName = (updateInfo.apkFileName ?: "SC-Downloader-${updateInfo.versionName}.apk")
             .replace(Regex("""[^A-Za-z0-9._-]"""), "_")
@@ -171,13 +201,15 @@ object AppUpdateManager {
             }
         }
 
-        val req = Request.Builder()
+        val reqBuilder = Request.Builder()
             .url(downloadUrl)
             .header("Accept", "application/octet-stream")
             .header("User-Agent", "SC-Downloader-Android")
-            .build()
+        if (token.isNotEmpty()) {
+            reqBuilder.header("Authorization", "Bearer $token")
+        }
 
-        HttpClientProvider.sharedClient.newCall(req).execute().use { response ->
+        HttpClientProvider.sharedClient.newCall(reqBuilder.build()).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("Download APK fallito (HTTP ${response.code})")
             }
