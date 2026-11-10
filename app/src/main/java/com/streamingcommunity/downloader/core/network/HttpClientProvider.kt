@@ -30,18 +30,34 @@ object HttpClientProvider {
     class InMemoryCookieJar : CookieJar {
         private val store = ConcurrentHashMap<String, MutableList<Cookie>>()
 
+        private fun normalizeHostKey(host: String): String =
+            host.trim().lowercase().trimEnd('.').removePrefix("www.")
+
         override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-            val hostCookies = store.getOrPut(url.host) { mutableListOf() }
-            synchronized(hostCookies) {
-                for (newCookie in cookies) {
-                    hostCookies.removeAll { it.name == newCookie.name }
-                    hostCookies.add(newCookie)
+            val keys = linkedSetOf(
+                url.host.lowercase(),
+                normalizeHostKey(url.host)
+            )
+            for (newCookie in cookies) {
+                if (newCookie.domain.isNotBlank()) {
+                    keys.add(newCookie.domain.lowercase().trimStart('.'))
+                    keys.add(normalizeHostKey(newCookie.domain.trimStart('.')))
+                }
+            }
+            for (key in keys) {
+                val hostCookies = store.getOrPut(key) { mutableListOf() }
+                synchronized(hostCookies) {
+                    for (newCookie in cookies) {
+                        hostCookies.removeAll { it.name == newCookie.name }
+                        hostCookies.add(newCookie)
+                    }
                 }
             }
         }
 
         override fun loadForRequest(url: HttpUrl): List<Cookie> {
-            val hostCookies = store[url.host] ?: return emptyList()
+            val key = normalizeHostKey(url.host)
+            val hostCookies = store[url.host.lowercase()] ?: store[key] ?: return emptyList()
             val now = System.currentTimeMillis()
             synchronized(hostCookies) {
                 hostCookies.removeAll { it.expiresAt < now }
@@ -50,10 +66,26 @@ object HttpClientProvider {
         }
 
         fun getCookieValue(host: String, name: String): String? {
-            val hostCookies = store[host] ?: return null
-            synchronized(hostCookies) {
-                return hostCookies.firstOrNull { it.name == name }?.value
+            val clean = host.trim().lowercase().trimEnd('.')
+            val normalized = normalizeHostKey(clean)
+            val candidates = listOf(clean, normalized, "www.$normalized")
+            for (cand in candidates) {
+                val hostCookies = store[cand] ?: continue
+                synchronized(hostCookies) {
+                    val found = hostCookies.firstOrNull { it.name.equals(name, ignoreCase = true) }?.value
+                    if (!found.isNullOrBlank()) return found
+                }
             }
+            // Fallback: check any stored host that shares the same base domain
+            for ((k, hostCookies) in store) {
+                if (normalizeHostKey(k) == normalized) {
+                    synchronized(hostCookies) {
+                        val found = hostCookies.firstOrNull { it.name.equals(name, ignoreCase = true) }?.value
+                        if (!found.isNullOrBlank()) return found
+                    }
+                }
+            }
+            return null
         }
 
         fun clear() {

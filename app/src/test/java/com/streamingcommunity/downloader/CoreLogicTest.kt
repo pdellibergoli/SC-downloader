@@ -203,4 +203,23 @@ class CoreLogicTest {
             parsed.apkDownloadUrl
         )
     }
+
+    @Test
+    fun testCookieJarCrossSubdomainMatching() {
+        val jar = com.streamingcommunity.downloader.core.network.HttpClientProvider.InMemoryCookieJar()
+        val url = okhttp3.HttpUrl.Builder()
+            .scheme("https")
+            .host("www.streamingcommunityz.nexus")
+            .build()
+        val cookie = okhttp3.Cookie.Builder()
+            .name("XSRF-TOKEN")
+            .value("abc123token")
+            .domain("streamingcommunityz.nexus")
+            .build()
+        jar.saveFromResponse(url, listOf(cookie))
+
+        assertEquals("abc123token", jar.getCookieValue("streamingcommunityz.nexus", "XSRF-TOKEN"))
+        assertEquals("abc123token", jar.getCookieValue("www.streamingcommunityz.nexus", "XSRF-TOKEN"))
+        assertEquals("abc123token", jar.getCookieValue("StreamingCommunityz.nexus", "xsrf-token"))
+    }
 }

@@ -249,23 +249,46 @@ object StreamingCommunityClient {
         shelves
     }
 
+    private fun parseInertiaOrHtmlPage(body: String): JsonObject {
+        val trimmed = body.trimStart()
+        return if (trimmed.startsWith("{")) {
+            json.parseToJsonElement(trimmed).jsonObject
+        } else {
+            parseDataPage(body)
+        }
+    }
+
     fun getTitleProps(
         idFilm: Int,
         slug: String,
         siteVersion: String,
         domain: String
     ): JsonObject {
-        val headers = mapOf(
-            "X-Inertia" to "true",
-            "X-Inertia-Version" to siteVersion,
-            "User-Agent" to HttpClientProvider.randomUserAgent()
-        )
-        getLocalized(domain, "/titles/$idFilm-$slug", headers = headers).use { resp ->
+        val path = "/titles/$idFilm-$slug"
+        if (siteVersion.isNotBlank()) {
+            val inertiaHeaders = mapOf(
+                "X-Inertia" to "true",
+                "X-Inertia-Version" to siteVersion,
+                "User-Agent" to HttpClientProvider.randomUserAgent()
+            )
+            getLocalized(domain, path, headers = inertiaHeaders).use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string().orEmpty()
+                    val root = runCatching { parseInertiaOrHtmlPage(body) }.getOrNull()
+                    val titleObj = root?.get("props")?.jsonObject?.get("title")?.jsonObject
+                    if (titleObj != null) return titleObj
+                }
+            }
+        }
+
+        // Fallback: server-rendered HTML page (works without X-Inertia-Version or XSRF token)
+        val htmlHeaders = mapOf("User-Agent" to HttpClientProvider.randomUserAgent())
+        getLocalized(domain, path, headers = htmlHeaders).use { resp ->
             if (!resp.isSuccessful) {
                 throw RuntimeException("Cannot fetch title info: HTTP ${resp.code}")
             }
             val body = resp.body?.string().orEmpty()
-            val root = json.parseToJsonElement(body).jsonObject
+            val root = parseInertiaOrHtmlPage(body)
             return root["props"]?.jsonObject?.get("title")?.jsonObject
                 ?: throw RuntimeException("Missing props.title in response")
         }
@@ -385,18 +408,49 @@ object StreamingCommunityClient {
         metadata
     }
 
+    private fun extractXsrfFromResponseOrJar(resp: Response, domain: String): String? {
+        val jarVal = HttpClientProvider.cookieJar.getCookieValue(domain, "XSRF-TOKEN")
+            ?: HttpClientProvider.cookieJar.getCookieValue(resp.request.url.host, "XSRF-TOKEN")
+        if (!jarVal.isNullOrBlank()) return jarVal
+
+        var current: Response? = resp
+        while (current != null) {
+            for (header in current.headers("Set-Cookie")) {
+                val part = header.substringBefore(";").trim()
+                if (part.startsWith("XSRF-TOKEN=", ignoreCase = true)) {
+                    val value = part.substringAfter("=").trim()
+                    if (value.isNotEmpty()) return value
+                }
+            }
+            current = current.priorResponse
+        }
+        return null
+    }
+
     suspend fun getToken(tvId: Int, domain: String): String = withContext(Dispatchers.IO) {
+        // 1. Check if XSRF-TOKEN is already in the cookie jar from previous page visits
+        val existing = HttpClientProvider.cookieJar.getCookieValue(domain, "XSRF-TOKEN")
+        if (!existing.isNullOrBlank()) {
+            return@withContext URLDecoder.decode(existing, "UTF-8")
+        }
+
+        // 2. Try visiting watch or home endpoints to obtain XSRF-TOKEN
         val ua = HttpClientProvider.randomUserAgent()
-        for (path in listOf("/it/watch/$tvId", "/watch/$tvId")) {
+        for (path in listOf("/it/watch/$tvId", "/watch/$tvId", "/it", "")) {
             val url = "https://$domain$path"
-            HttpClientProvider.executeGet(url, mapOf("User-Agent" to ua)).use {
-                val rawToken = HttpClientProvider.cookieJar.getCookieValue(domain, "XSRF-TOKEN")
-                if (!rawToken.isNullOrBlank()) {
-                    return@withContext URLDecoder.decode(rawToken, "UTF-8")
+            runCatching {
+                HttpClientProvider.executeGet(url, mapOf("User-Agent" to ua)).use { resp ->
+                    val rawToken = extractXsrfFromResponseOrJar(resp, domain)
+                    if (!rawToken.isNullOrBlank()) {
+                        return@withContext URLDecoder.decode(rawToken, "UTF-8")
+                    }
                 }
             }
         }
-        throw RuntimeException("XSRF-TOKEN cookie not found after page visit")
+
+        // 3. Some StreamingCommunity mirrors or Cloudflare edge-cached pages do not emit
+        // an XSRF-TOKEN cookie on GET requests; return empty string and let GET requests proceed.
+        ""
     }
 
     suspend fun getSeasonEpisodes(
@@ -407,55 +461,80 @@ object StreamingCommunityClient {
         token: String,
         seasonNumber: Int
     ): List<EpisodeInfo> = withContext(Dispatchers.IO) {
-        val headers = mapOf(
-            "authority" to domain,
-            "referer" to siteUrl(domain, "/titles/$tvId-$tvSlug"),
-            "user-agent" to HttpClientProvider.randomUserAgent(),
-            "x-inertia" to "true",
-            "x-inertia-version" to version,
-            "x-xsrf-token" to token
-        )
+        val path = "/titles/$tvId-$tvSlug/season-$seasonNumber"
+        var loaded: JsonObject? = null
 
-        getLocalized(
-            domain = domain,
-            path = "/titles/$tvId-$tvSlug/season-$seasonNumber",
-            headers = headers
-        ).use { resp ->
-            if (!resp.isSuccessful) {
-                throw RuntimeException("Cannot fetch season info: HTTP ${resp.code}")
-            }
-            val body = resp.body?.string().orEmpty()
-            val root = json.parseToJsonElement(body).jsonObject
-            val loaded = root["props"]?.jsonObject?.get("loadedSeason")?.jsonObject
-                ?: throw RuntimeException("Missing loadedSeason in response")
-
-            val loadedNum = loaded["number"]?.jsonPrimitive?.contentOrNull
-            if (loadedNum != null && loadedNum != seasonNumber.toString()) {
-                throw RuntimeException("Season $seasonNumber not found (site answered with season $loadedNum)")
-            }
-
-            val episodesArr = loaded["episodes"] as? JsonArray ?: return@withContext emptyList()
-            episodesArr.mapNotNull { el ->
-                val ep = el as? JsonObject ?: return@mapNotNull null
-                val id = ep["id"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null
-                val number = ep["number"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                val name = ep["name"]?.jsonPrimitive?.contentOrNull
-                val plot = ep["plot"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-                val duration = ep["duration"]?.jsonPrimitive?.intOrNull
-                val images = ep["images"] as? JsonArray
-                val still = listOf("cover", "still", "background").firstNotNullOfOrNull { kind ->
-                    extractImageFilename(images, kind)
+        if (version.isNotBlank()) {
+            val inertiaHeaders = buildMap {
+                put("authority", domain)
+                put("referer", siteUrl(domain, "/titles/$tvId-$tvSlug"))
+                put("user-agent", HttpClientProvider.randomUserAgent())
+                put("x-inertia", "true")
+                put("x-inertia-version", version)
+                if (token.isNotBlank()) {
+                    put("x-xsrf-token", token)
                 }
-                EpisodeInfo(
-                    id = id,
-                    number = number,
-                    name = name,
-                    plot = plot,
-                    duration = duration,
-                    still = still,
-                    season = seasonNumber
-                )
             }
+            getLocalized(
+                domain = domain,
+                path = path,
+                headers = inertiaHeaders
+            ).use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string().orEmpty()
+                    val root = runCatching { parseInertiaOrHtmlPage(body) }.getOrNull()
+                    loaded = root?.get("props")?.jsonObject?.get("loadedSeason")?.jsonObject
+                }
+            }
+        }
+
+        // Fallback: server-rendered HTML page (works even without X-Inertia-Version or XSRF-TOKEN)
+        if (loaded == null) {
+            val htmlHeaders = mapOf(
+                "referer" to siteUrl(domain, "/titles/$tvId-$tvSlug"),
+                "user-agent" to HttpClientProvider.randomUserAgent()
+            )
+            getLocalized(
+                domain = domain,
+                path = path,
+                headers = htmlHeaders
+            ).use { resp ->
+                if (!resp.isSuccessful) {
+                    throw RuntimeException("Cannot fetch season info: HTTP ${resp.code}")
+                }
+                val body = resp.body?.string().orEmpty()
+                val root = parseInertiaOrHtmlPage(body)
+                loaded = root["props"]?.jsonObject?.get("loadedSeason")?.jsonObject
+            }
+        }
+
+        val seasonObj = loaded ?: throw RuntimeException("Missing loadedSeason in response")
+        val loadedNum = seasonObj["number"]?.jsonPrimitive?.contentOrNull
+        if (loadedNum != null && loadedNum != seasonNumber.toString()) {
+            throw RuntimeException("Season $seasonNumber not found (site answered with season $loadedNum)")
+        }
+
+        val episodesArr = seasonObj["episodes"] as? JsonArray ?: return@withContext emptyList()
+        episodesArr.mapNotNull { el ->
+            val ep = el as? JsonObject ?: return@mapNotNull null
+            val id = ep["id"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null
+            val number = ep["number"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val name = ep["name"]?.jsonPrimitive?.contentOrNull
+            val plot = ep["plot"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            val duration = ep["duration"]?.jsonPrimitive?.intOrNull
+            val images = ep["images"] as? JsonArray
+            val still = listOf("cover", "still", "background").firstNotNullOfOrNull { kind ->
+                extractImageFilename(images, kind)
+            }
+            EpisodeInfo(
+                id = id,
+                number = number,
+                name = name,
+                plot = plot,
+                duration = duration,
+                still = still,
+                season = seasonNumber
+            )
         }
     }
 
@@ -492,11 +571,13 @@ object StreamingCommunityClient {
     ): Pair<String, String> {
         val ua = HttpClientProvider.randomUserAgent()
         val params = mapOf("episode_id" to epId.toString(), "next_episode" to "1")
-        val headers = mapOf(
-            "Referer" to siteUrl(domain, "/watch/$tvId?e=$epId"),
-            "User-Agent" to ua,
-            "Cookie" to "XSRF-TOKEN=$token"
-        )
+        val headers = buildMap {
+            put("Referer", siteUrl(domain, "/watch/$tvId?e=$epId"))
+            put("User-Agent", ua)
+            if (token.isNotBlank()) {
+                put("Cookie", "XSRF-TOKEN=$token")
+            }
+        }
         var iframeHtml: String? = null
         var lastStatus = 0
 
