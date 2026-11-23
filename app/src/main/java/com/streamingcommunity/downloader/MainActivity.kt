@@ -61,6 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import com.streamingcommunity.downloader.core.hls.LocalHlsProxyServer
 import com.streamingcommunity.downloader.core.model.DownloadStatus
 import com.streamingcommunity.downloader.core.model.StreamSource
 import com.streamingcommunity.downloader.core.network.AppUpdateManager
@@ -584,17 +585,10 @@ class MainActivity : ComponentActivity() {
     private fun openStreamInExternalPlayer(source: StreamSource, title: String) {
         try {
             val ua = HttpClientProvider.randomUserAgent()
+            val localProxyUrl = LocalHlsProxyServer.prepareStream(source, ua)
             val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(Uri.parse(source.m3u8Url), "video/*")
+                setDataAndType(Uri.parse(localProxyUrl), "video/*")
                 putExtra("title", title)
-                // Supported by MX Player, VLC, Just Player, Next Player
-                putExtra(
-                    "headers",
-                    arrayOf(
-                        "Referer", source.referer,
-                        "User-Agent", ua
-                    )
-                )
             }
             startActivity(Intent.createChooser(intent, "Apri stream con"))
         } catch (e: Exception) {

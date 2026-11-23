@@ -222,4 +222,37 @@ class CoreLogicTest {
         assertEquals("abc123token", jar.getCookieValue("www.streamingcommunityz.nexus", "XSRF-TOKEN"))
         assertEquals("abc123token", jar.getCookieValue("StreamingCommunityz.nexus", "xsrf-token"))
     }
+
+    @Test
+    fun testLocalHlsProxyPlaylistRewriting() {
+        val master = """
+            #EXTM3U
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",LANGUAGE="ita",NAME="Italian",DEFAULT=YES,URI="audio/ita.m3u8"
+            #EXT-X-STREAM-INF:BANDWIDTH=4200000,RESOLUTION=1920x1080,AUDIO="audio"
+            1080p/index.m3u8
+        """.trimIndent()
+
+        val rewrittenMaster = com.streamingcommunity.downloader.core.hls.LocalHlsProxyServer.rewriteM3u8Playlist(
+            master,
+            "https://vixcloud.co/playlist/master.m3u8",
+            45678
+        )
+        assertTrue(rewrittenMaster.contains("URI=\"http://127.0.0.1:45678/playlist.m3u8?u="))
+        assertTrue(rewrittenMaster.contains("\nhttp://127.0.0.1:45678/playlist.m3u8?u="))
+
+        val variant = """
+            #EXTM3U
+            #EXT-X-KEY:METHOD=AES-128,URI="/storage/enc.key",IV=0x00000000000000000000000000000001
+            #EXTINF:4.000,
+            seg-001.ts
+        """.trimIndent()
+
+        val rewrittenVariant = com.streamingcommunity.downloader.core.hls.LocalHlsProxyServer.rewriteM3u8Playlist(
+            variant,
+            "https://vixcloud.co/playlist/1080p/index.m3u8",
+            45678
+        )
+        assertTrue(rewrittenVariant.contains("URI=\"http://127.0.0.1:45678/enc.key?u="))
+        assertTrue(rewrittenVariant.contains("\nhttp://127.0.0.1:45678/segment.ts?u="))
+    }
 }
