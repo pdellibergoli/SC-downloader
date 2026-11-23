@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -80,6 +81,19 @@ data class StreamingPlayerUiState(
     val errorMessage: String? = null
 )
 
+fun buildStreamingMediaKey(
+    title: MediaTitle,
+    season: Int?,
+    episode: EpisodeInfo?
+): String {
+    return if (episode != null) {
+        val epIdentifier = if (episode.id > 0) "id:${episode.id}" else "s${season ?: 1}e${episode.number}"
+        "${title.source.id}:ep:${title.id}:$epIdentifier"
+    } else {
+        "${title.source.id}:movie:${title.id}"
+    }
+}
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val app = application as SCApplication
@@ -95,6 +109,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val watchesState: StateFlow<List<WatchEntity>> = watchlistManager.allWatchesFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val playbackProgressState: StateFlow<Map<String, PlaybackProgressEntity>> =
+        app.database.playbackProgressDao().observeAllProgress()
+            .map { list -> list.associateBy { it.mediaKey } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     val pendingDomainCandidate: StateFlow<DomainCandidate?> = DomainRecoveryManager.pendingCandidate
 
@@ -567,19 +586,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _detailState.value = null
     }
 
-    private fun buildStreamingMediaKey(
-        title: MediaTitle,
-        season: Int?,
-        episode: EpisodeInfo?
-    ): String {
-        return if (episode != null) {
-            val epIdentifier = if (episode.id > 0) "id:${episode.id}" else "s${season ?: 1}e${episode.number}"
-            "${title.source.id}:ep:${title.id}:$epIdentifier"
-        } else {
-            "${title.source.id}:movie:${title.id}"
-        }
-    }
-
     fun saveStreamingProgress(mediaKey: String, positionMs: Long, durationMs: Long) {
         if (mediaKey.isBlank() || positionMs < 0L) return
         viewModelScope.launch(Dispatchers.IO) {
@@ -588,13 +594,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     (durationMs - positionMs) <= 15_000L
                 )
             if (nearEnd) {
-                app.database.playbackProgressDao().deleteProgress(mediaKey)
+                app.database.playbackProgressDao().upsertProgress(
+                    PlaybackProgressEntity(
+                        mediaKey = mediaKey,
+                        positionMs = durationMs.coerceAtLeast(0L),
+                        durationMs = durationMs.coerceAtLeast(0L),
+                        completed = true,
+                        updatedAtMs = System.currentTimeMillis()
+                    )
+                )
             } else if (positionMs >= 5_000L) {
                 app.database.playbackProgressDao().upsertProgress(
                     PlaybackProgressEntity(
                         mediaKey = mediaKey,
                         positionMs = positionMs,
                         durationMs = durationMs.coerceAtLeast(0L),
+                        completed = false,
                         updatedAtMs = System.currentTimeMillis()
                     )
                 )
@@ -717,9 +732,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     } else null
                 }
                 val resumePositionMs = savedProgress?.let { prog ->
-                    val nearEnd = prog.durationMs > 0L && (
-                        prog.positionMs >= (prog.durationMs * 0.96).toLong() ||
-                            (prog.durationMs - prog.positionMs) <= 15_000L
+                    val nearEnd = prog.completed || (
+                        prog.durationMs > 0L && (
+                            prog.positionMs >= (prog.durationMs * 0.96).toLong() ||
+                                (prog.durationMs - prog.positionMs) <= 15_000L
+                            )
                         )
                     if (prog.positionMs > 5_000L && !nearEnd) prog.positionMs else 0L
                 } ?: 0L

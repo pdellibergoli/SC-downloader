@@ -126,6 +126,7 @@ class MainActivity : ComponentActivity() {
                 val streamingState by viewModel.streamingState.collectAsState()
                 val downloadJobs by viewModel.downloadJobsState.collectAsState()
                 val watches by viewModel.watchesState.collectAsState()
+                val playbackProgressMap by viewModel.playbackProgressState.collectAsState()
                 val localFiles by viewModel.localFiles.collectAsState()
                 val isCheckingWatches by viewModel.isCheckingWatches.collectAsState()
                 val isCheckingDomain by viewModel.isCheckingDomain.collectAsState()
@@ -449,6 +450,7 @@ class MainActivity : ComponentActivity() {
                                 domain = settings.domain,
                                 isFollowed = isFollowed,
                                 titleJobs = titleJobs,
+                                playbackProgressMap = playbackProgressMap,
                                 onDismiss = viewModel::closeTitleDetail,
                                 onSelectSeason = viewModel::selectSeasonInDetail,
                                 onToggleAudioLang = viewModel::toggleAudioLanguage,

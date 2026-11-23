@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -37,6 +38,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -57,7 +59,9 @@ import com.streamingcommunity.downloader.core.model.EpisodeInfo
 import com.streamingcommunity.downloader.core.model.MediaSource
 import com.streamingcommunity.downloader.core.network.HttpClientProvider
 import com.streamingcommunity.downloader.data.DownloadJobEntity
+import com.streamingcommunity.downloader.data.PlaybackProgressEntity
 import com.streamingcommunity.downloader.ui.TitleDetailUiState
+import com.streamingcommunity.downloader.ui.buildStreamingMediaKey
 import com.streamingcommunity.downloader.ui.theme.AccentCyan
 import com.streamingcommunity.downloader.ui.theme.AccentEmerald
 
@@ -68,6 +72,7 @@ fun TitleDetailSheet(
     domain: String,
     isFollowed: Boolean,
     titleJobs: List<DownloadJobEntity>,
+    playbackProgressMap: Map<String, PlaybackProgressEntity> = emptyMap(),
     onDismiss: () -> Unit,
     onSelectSeason: (Int) -> Unit,
     onToggleAudioLang: (String) -> Unit,
@@ -274,55 +279,105 @@ fun TitleDetailSheet(
             // Actions for Movie vs Series/Anime
             if (!state.title.isSeries && state.title.source == MediaSource.STREAMING_COMMUNITY) {
                 val filmJob = activeOrCompletedJobs.firstOrNull { it.mediaType == "movie" }
+                val filmProgress = playbackProgressMap[buildStreamingMediaKey(state.title, season = null, episode = null)]
                 item {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
-                        Button(
-                            onClick = onStreamFilm,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = null
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Guarda ora",
-                                fontWeight = FontWeight.Bold
-                            )
+                        if (filmProgress != null && (filmProgress.completed || filmProgress.positionMs >= 5_000L)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (filmProgress.completed) Icons.Default.CheckCircle else Icons.Default.Visibility,
+                                    contentDescription = null,
+                                    tint = if (filmProgress.completed) AccentEmerald else AccentCyan,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (filmProgress.completed) {
+                                        "Film già visto completamente"
+                                    } else {
+                                        "In corso • riprendi da ${formatPlaybackTime(filmProgress.positionMs)}"
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (filmProgress.completed) AccentEmerald else AccentCyan,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            if (!filmProgress.completed && filmProgress.durationMs > 0L) {
+                                LinearProgressIndicator(
+                                    progress = { (filmProgress.positionMs.toFloat() / filmProgress.durationMs.toFloat()).coerceIn(0.02f, 1f) },
+                                    color = AccentCyan,
+                                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(RoundedCornerShape(2.dp))
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                            }
                         }
 
-                        OutlinedButton(
-                            onClick = onDownloadFilm,
-                            enabled = filmJob == null,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(
-                                imageVector = when {
-                                    filmJob == null -> Icons.Default.Download
-                                    filmJob.status == DownloadStatus.COMPLETED.name -> Icons.Default.CheckCircle
-                                    else -> Icons.Default.Schedule
-                                },
-                                contentDescription = null
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = when {
-                                    filmJob == null -> "Scarica Film"
-                                    filmJob.status == DownloadStatus.COMPLETED.name -> "Scaricato"
-                                    filmJob.status == DownloadStatus.QUEUED.name -> "In coda"
-                                    else -> "${filmJob.progressPercent}%"
-                                },
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Button(
+                                onClick = onStreamFilm,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                val playLabel = when {
+                                    filmProgress?.completed == true -> "Riguarda"
+                                    filmProgress != null && filmProgress.positionMs >= 5_000L ->
+                                        "Riprendi (${formatPlaybackTime(filmProgress.positionMs)})"
+                                    else -> "Guarda ora"
+                                }
+                                Text(
+                                    text = playLabel,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = onDownloadFilm,
+                                enabled = filmJob == null,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = when {
+                                        filmJob == null -> Icons.Default.Download
+                                        filmJob.status == DownloadStatus.COMPLETED.name -> Icons.Default.CheckCircle
+                                        else -> Icons.Default.Schedule
+                                    },
+                                    contentDescription = null
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = when {
+                                        filmJob == null -> "Scarica Film"
+                                        filmJob.status == DownloadStatus.COMPLETED.name -> "Scaricato"
+                                        filmJob.status == DownloadStatus.QUEUED.name -> "In coda"
+                                        else -> "${filmJob.progressPercent}%"
+                                    },
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
@@ -429,11 +484,55 @@ fun TitleDetailSheet(
                         )
                     }
                 } else {
+                    val watchedCount = state.episodes.count { ep ->
+                        val key = buildStreamingMediaKey(state.title, state.selectedSeason, ep)
+                        playbackProgressMap[key]?.completed == true
+                    }
+                    val inProgressCount = state.episodes.count { ep ->
+                        val key = buildStreamingMediaKey(state.title, state.selectedSeason, ep)
+                        val p = playbackProgressMap[key]
+                        p != null && !p.completed && p.positionMs >= 5_000L
+                    }
+                    if (watchedCount > 0 || inProgressCount > 0) {
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (watchedCount > 0) Icons.Default.CheckCircle else Icons.Default.Visibility,
+                                    contentDescription = null,
+                                    tint = if (watchedCount > 0) AccentEmerald else AccentCyan,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                val summaryParts = buildList {
+                                    if (watchedCount > 0) {
+                                        add("$watchedCount/${state.episodes.size} visti")
+                                    }
+                                    if (inProgressCount > 0) {
+                                        add("$inProgressCount in corso")
+                                    }
+                                }
+                                Text(
+                                    text = summaryParts.joinToString(" • "),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (watchedCount > 0) AccentEmerald else AccentCyan,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+
                     items(state.episodes, key = { it.id }) { ep ->
+                        val epKey = buildStreamingMediaKey(state.title, state.selectedSeason, ep)
                         EpisodeRowItem(
                             episode = ep,
                             domain = domain,
                             existingJob = findJobForEpisode(ep),
+                            playbackProgress = playbackProgressMap[epKey],
                             onStream = { onStreamEpisode(ep) },
                             onDownload = { onDownloadEpisode(ep) }
                         )
@@ -449,12 +548,19 @@ private fun EpisodeRowItem(
     episode: EpisodeInfo,
     domain: String,
     existingJob: DownloadJobEntity?,
+    playbackProgress: PlaybackProgressEntity?,
     onStream: () -> Unit,
     onDownload: () -> Unit
 ) {
     val stillUrl = HttpClientProvider.resolveImageUrl(episode.still, domain)
+    val isWatched = playbackProgress?.completed == true
+    val isInProgress = playbackProgress != null && !playbackProgress.completed && playbackProgress.positionMs >= 5_000L
+    val progressRatio = if (playbackProgress != null && playbackProgress.durationMs > 0L) {
+        (playbackProgress.positionMs.toFloat() / playbackProgress.durationMs.toFloat()).coerceIn(0.03f, 1f)
+    } else 0f
 
     Card(
+        onClick = onStream,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 5.dp),
@@ -467,15 +573,57 @@ private fun EpisodeRowItem(
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (stillUrl != null) {
-                AsyncImage(
-                    model = stillUrl,
-                    contentDescription = episode.name,
-                    contentScale = ContentScale.Crop,
+                Box(
                     modifier = Modifier
                         .width(100.dp)
                         .height(58.dp)
                         .clip(RoundedCornerShape(8.dp))
-                )
+                ) {
+                    AsyncImage(
+                        model = stillUrl,
+                        contentDescription = episode.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    if (isWatched) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(4.dp)
+                                .background(Color.Black.copy(alpha = 0.65f), CircleShape)
+                                .padding(2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Visto",
+                                tint = AccentEmerald,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .fillMaxWidth()
+                                .height(3.dp)
+                                .background(AccentEmerald)
+                        )
+                    } else if (isInProgress && progressRatio > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .fillMaxWidth()
+                                .height(3.dp)
+                                .background(Color.Black.copy(alpha = 0.5f))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(progressRatio)
+                                    .height(3.dp)
+                                    .background(AccentCyan)
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.width(12.dp))
             }
 
@@ -484,6 +632,11 @@ private fun EpisodeRowItem(
                     text = "${episode.number}. ${episode.name ?: "Episodio ${episode.number}"}",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold,
+                    color = if (isWatched) {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -496,11 +649,61 @@ private fun EpisodeRowItem(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                if (episode.duration != null && episode.duration > 0) {
-                    Text(
-                        text = "${episode.duration} min",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = AccentCyan
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(top = 2.dp)
+                ) {
+                    if (episode.duration != null && episode.duration > 0) {
+                        Text(
+                            text = "${episode.duration} min",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AccentCyan
+                        )
+                    }
+                    if (isWatched) {
+                        Surface(
+                            color = AccentEmerald.copy(alpha = 0.16f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = AccentEmerald,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "Visto",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = AccentEmerald,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    } else if (isInProgress && playbackProgress != null) {
+                        Text(
+                            text = "Riprendi • ${formatPlaybackTime(playbackProgress.positionMs)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AccentCyan,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                if (stillUrl == null && isInProgress && progressRatio > 0f) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        progress = { progressRatio },
+                        color = AccentCyan,
+                        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(2.dp))
                     )
                 }
             }
@@ -601,5 +804,17 @@ private fun EpisodeRowItem(
                 }
             }
         }
+    }
+}
+
+private fun formatPlaybackTime(ms: Long): String {
+    val totalSec = (ms / 1000L).coerceAtLeast(0L)
+    val hours = totalSec / 3600L
+    val minutes = (totalSec % 3600L) / 60L
+    val seconds = totalSec % 60L
+    return if (hours > 0L) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%02d:%02d".format(minutes, seconds)
     }
 }

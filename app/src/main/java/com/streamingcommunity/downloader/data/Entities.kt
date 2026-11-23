@@ -107,6 +107,7 @@ data class PlaybackProgressEntity(
     val mediaKey: String,
     val positionMs: Long,
     val durationMs: Long,
+    val completed: Boolean = false,
     val updatedAtMs: Long = System.currentTimeMillis()
 )
 
