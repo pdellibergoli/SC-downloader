@@ -13,6 +13,7 @@ import com.streamingcommunity.downloader.core.model.EpisodeInfo
 import com.streamingcommunity.downloader.core.model.MediaSource
 import com.streamingcommunity.downloader.core.model.MediaTitle
 import com.streamingcommunity.downloader.core.model.Shelf
+import com.streamingcommunity.downloader.core.model.StreamSource
 import com.streamingcommunity.downloader.core.model.TitleMetadata
 import com.streamingcommunity.downloader.core.naming.NamingEngine
 import com.streamingcommunity.downloader.core.network.AnimeUnityClient
@@ -25,6 +26,7 @@ import com.streamingcommunity.downloader.data.DownloadJobEntity
 import com.streamingcommunity.downloader.data.WatchEntity
 import com.streamingcommunity.downloader.service.BackgroundWorkScheduler
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -58,6 +60,20 @@ data class TitleDetailUiState(
     val selectedSeason: Int = 1,
     val isLoadingEpisodes: Boolean = false,
     val episodes: List<EpisodeInfo> = emptyList(),
+    val errorMessage: String? = null
+)
+
+data class StreamingPlayerUiState(
+    val title: MediaTitle,
+    val displayTitle: String,
+    val subtitleText: String? = null,
+    val season: Int? = null,
+    val currentEpisode: EpisodeInfo? = null,
+    val seasonEpisodes: List<EpisodeInfo> = emptyList(),
+    val preferredAudioLang: String? = null,
+    val preferredSubtitleLang: String? = null,
+    val isLoading: Boolean = true,
+    val streamSource: StreamSource? = null,
     val errorMessage: String? = null
 )
 
@@ -111,6 +127,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _detailState = MutableStateFlow<TitleDetailUiState?>(null)
     val detailState: StateFlow<TitleDetailUiState?> = _detailState.asStateFlow()
+
+    private val _streamingState = MutableStateFlow<StreamingPlayerUiState?>(null)
+    val streamingState: StateFlow<StreamingPlayerUiState?> = _streamingState.asStateFlow()
+    private var streamingResolveJob: Job? = null
 
     private val _localFiles = MutableStateFlow<List<LocalMediaFile>>(emptyList())
     val localFiles: StateFlow<List<LocalMediaFile>> = _localFiles.asStateFlow()
@@ -542,6 +562,167 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeTitleDetail() {
         _detailState.value = null
+    }
+
+    fun streamFilmFromDetail() {
+        val detail = _detailState.value ?: return
+        val audioPref = detail.selectedAudioLanguages.firstOrNull()
+        val subPref = detail.selectedSubtitleLanguages.firstOrNull()
+        val yearLabel = detail.metadata.year ?: detail.title.year
+
+        _streamingState.value = StreamingPlayerUiState(
+            title = detail.title,
+            displayTitle = detail.title.name,
+            subtitleText = yearLabel?.let { "Film ($it)" } ?: "Film",
+            preferredAudioLang = audioPref,
+            preferredSubtitleLang = subPref,
+            isLoading = true
+        )
+        resolveCurrentStreamingSource()
+    }
+
+    fun streamEpisodeFromDetail(episode: EpisodeInfo) {
+        val detail = _detailState.value ?: return
+        val audioPref = detail.selectedAudioLanguages.firstOrNull()
+        val subPref = detail.selectedSubtitleLanguages.firstOrNull()
+        val epTitle = episode.name?.takeIf { it.isNotBlank() } ?: "Episodio ${episode.number}"
+        val subtitleLabel = if (detail.title.source == MediaSource.ANIME_UNITY) {
+            "Ep. ${episode.number} • $epTitle"
+        } else {
+            "S%02dE%s • %s".format(detail.selectedSeason, episode.number.padStart(2, '0'), epTitle)
+        }
+
+        _streamingState.value = StreamingPlayerUiState(
+            title = detail.title,
+            displayTitle = detail.title.name,
+            subtitleText = subtitleLabel,
+            season = detail.selectedSeason,
+            currentEpisode = episode,
+            seasonEpisodes = detail.episodes,
+            preferredAudioLang = audioPref,
+            preferredSubtitleLang = subPref,
+            isLoading = true
+        )
+        resolveCurrentStreamingSource()
+    }
+
+    fun retryStreaming() {
+        val current = _streamingState.value ?: return
+        _streamingState.value = current.copy(
+            isLoading = true,
+            streamSource = null,
+            errorMessage = null
+        )
+        resolveCurrentStreamingSource()
+    }
+
+    fun playPreviousStreamingEpisode() {
+        val current = _streamingState.value ?: return
+        val curEp = current.currentEpisode ?: return
+        val idx = current.seasonEpisodes.indexOfFirst { it.id == curEp.id }
+        if (idx > 0) {
+            val prevEp = current.seasonEpisodes[idx - 1]
+            switchStreamingEpisode(current, prevEp)
+        }
+    }
+
+    fun playNextStreamingEpisode() {
+        val current = _streamingState.value ?: return
+        val curEp = current.currentEpisode ?: return
+        val idx = current.seasonEpisodes.indexOfFirst { it.id == curEp.id }
+        if (idx in 0 until (current.seasonEpisodes.size - 1)) {
+            val nextEp = current.seasonEpisodes[idx + 1]
+            switchStreamingEpisode(current, nextEp)
+        }
+    }
+
+    private fun switchStreamingEpisode(current: StreamingPlayerUiState, targetEp: EpisodeInfo) {
+        val epTitle = targetEp.name?.takeIf { it.isNotBlank() } ?: "Episodio ${targetEp.number}"
+        val season = current.season ?: 1
+        val subtitleLabel = if (current.title.source == MediaSource.ANIME_UNITY) {
+            "Ep. ${targetEp.number} • $epTitle"
+        } else {
+            "S%02dE%s • %s".format(season, targetEp.number.padStart(2, '0'), epTitle)
+        }
+        _streamingState.value = current.copy(
+            subtitleText = subtitleLabel,
+            currentEpisode = targetEp,
+            isLoading = true,
+            streamSource = null,
+            errorMessage = null
+        )
+        resolveCurrentStreamingSource()
+    }
+
+    fun closeStreamingPlayer() {
+        streamingResolveJob?.cancel()
+        streamingResolveJob = null
+        _streamingState.value = null
+    }
+
+    private fun resolveCurrentStreamingSource() {
+        streamingResolveJob?.cancel()
+        val state = _streamingState.value ?: return
+
+        streamingResolveJob = viewModelScope.launch {
+            try {
+                val settings = settingsRepository.getSettings()
+                val source = when {
+                    state.title.source == MediaSource.ANIME_UNITY -> {
+                        val ep = state.currentEpisode
+                            ?: throw RuntimeException("Episodio anime non selezionato")
+                        AnimeUnityClient.resolveAnimeEpisodeStream(
+                            episodeId = ep.id,
+                            host = settings.animeUnityDomain,
+                            videoHostOverride = settings.videoHost
+                        )
+                    }
+
+                    state.currentEpisode != null -> {
+                        if (settings.domain.isBlank()) {
+                            throw RuntimeException("Dominio StreamingCommunity non configurato nelle Impostazioni")
+                        }
+                        val tvId = state.title.numericId ?: state.title.id.toIntOrNull()
+                            ?: throw RuntimeException("ID serie non valido")
+                        val season = state.season ?: 1
+                        val token = StreamingCommunityClient.getToken(tvId, settings.domain)
+                        StreamingCommunityClient.resolveEpisodeStream(
+                            tvId = tvId,
+                            ep = state.currentEpisode,
+                            tvName = state.title.name,
+                            season = season,
+                            domain = settings.domain,
+                            token = token,
+                            videoHostOverride = settings.videoHost
+                        )
+                    }
+
+                    else -> {
+                        if (settings.domain.isBlank()) {
+                            throw RuntimeException("Dominio StreamingCommunity non configurato nelle Impostazioni")
+                        }
+                        val filmId = state.title.numericId ?: state.title.id.toIntOrNull()
+                            ?: throw RuntimeException("ID film non valido")
+                        StreamingCommunityClient.resolveFilmStream(
+                            idFilm = filmId,
+                            domain = settings.domain,
+                            videoHostOverride = settings.videoHost
+                        )
+                    }
+                }
+
+                _streamingState.value = _streamingState.value?.copy(
+                    isLoading = false,
+                    streamSource = source,
+                    errorMessage = null
+                )
+            } catch (e: Exception) {
+                _streamingState.value = _streamingState.value?.copy(
+                    isLoading = false,
+                    errorMessage = e.message ?: "Impossibile risolvere il flusso streaming"
+                )
+            }
+        }
     }
 
     fun downloadFilmFromDetail() {

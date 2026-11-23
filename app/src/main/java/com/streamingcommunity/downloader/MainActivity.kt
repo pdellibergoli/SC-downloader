@@ -62,12 +62,15 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.streamingcommunity.downloader.core.model.DownloadStatus
+import com.streamingcommunity.downloader.core.model.StreamSource
 import com.streamingcommunity.downloader.core.network.AppUpdateManager
+import com.streamingcommunity.downloader.core.network.HttpClientProvider
 import com.streamingcommunity.downloader.ui.MainViewModel
 import com.streamingcommunity.downloader.ui.screens.DownloadsScreen
 import com.streamingcommunity.downloader.ui.screens.ExploreScreen
 import com.streamingcommunity.downloader.ui.screens.LibraryScreen
 import com.streamingcommunity.downloader.ui.screens.SettingsScreen
+import com.streamingcommunity.downloader.ui.screens.StreamingPlayerScreen
 import com.streamingcommunity.downloader.ui.screens.TitleDetailSheet
 import com.streamingcommunity.downloader.ui.screens.WatchlistScreen
 import com.streamingcommunity.downloader.ui.theme.SCDownloaderTheme
@@ -119,6 +122,7 @@ class MainActivity : ComponentActivity() {
                 val exploreError by viewModel.exploreError.collectAsState()
                 val pendingDomainCandidate by viewModel.pendingDomainCandidate.collectAsState()
                 val detailState by viewModel.detailState.collectAsState()
+                val streamingState by viewModel.streamingState.collectAsState()
                 val downloadJobs by viewModel.downloadJobsState.collectAsState()
                 val watches by viewModel.watchesState.collectAsState()
                 val localFiles by viewModel.localFiles.collectAsState()
@@ -283,7 +287,8 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     bottomBar = {
-                        NavigationBar {
+                        if (streamingState == null) {
+                            NavigationBar {
                             NavigationBarItem(
                                 selected = selectedTab == 0,
                                 onClick = {
@@ -351,12 +356,13 @@ class MainActivity : ComponentActivity() {
                                 label = { Text("Impostazioni") }
                             )
                         }
+                        }
                     }
                 ) { innerPadding ->
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(innerPadding)
+                            .padding(if (streamingState != null) androidx.compose.foundation.layout.PaddingValues() else innerPadding)
                     ) {
                         when (selectedTab) {
                             0 -> ExploreScreen(
@@ -446,10 +452,38 @@ class MainActivity : ComponentActivity() {
                                 onSelectSeason = viewModel::selectSeasonInDetail,
                                 onToggleAudioLang = viewModel::toggleAudioLanguage,
                                 onToggleSubtitleLang = viewModel::toggleSubtitleLanguage,
+                                onStreamFilm = viewModel::streamFilmFromDetail,
                                 onDownloadFilm = viewModel::downloadFilmFromDetail,
+                                onStreamEpisode = viewModel::streamEpisodeFromDetail,
                                 onDownloadEpisode = viewModel::downloadEpisodeFromDetail,
                                 onDownloadWholeSeason = viewModel::downloadWholeSeasonFromDetail,
                                 onFollowSeries = viewModel::followSeriesFromDetail
+                            )
+                        }
+
+                        streamingState?.let { currentStream ->
+                            val curEp = currentStream.currentEpisode
+                            val curIdx = if (curEp != null) {
+                                currentStream.seasonEpisodes.indexOfFirst { it.id == curEp.id }
+                            } else -1
+                            val hasPrev = curIdx > 0
+                            val hasNext = curIdx in 0 until (currentStream.seasonEpisodes.size - 1)
+
+                            StreamingPlayerScreen(
+                                state = currentStream,
+                                onClose = viewModel::closeStreamingPlayer,
+                                onRetry = viewModel::retryStreaming,
+                                onPlayPreviousEpisode = if (hasPrev) viewModel::playPreviousStreamingEpisode else null,
+                                onPlayNextEpisode = if (hasNext) viewModel::playNextStreamingEpisode else null,
+                                onOpenExternalPlayer = { source ->
+                                    openStreamInExternalPlayer(
+                                        source = source,
+                                        title = listOfNotNull(
+                                            currentStream.displayTitle,
+                                            currentStream.subtitleText
+                                        ).joinToString(" - ")
+                                    )
+                                }
                             )
                         }
                     }
@@ -544,6 +578,27 @@ class MainActivity : ComponentActivity() {
             startActivity(intent)
         } catch (e: Exception) {
             viewModel.showMessage("Impossibile aprire il browser")
+        }
+    }
+
+    private fun openStreamInExternalPlayer(source: StreamSource, title: String) {
+        try {
+            val ua = HttpClientProvider.randomUserAgent()
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(Uri.parse(source.m3u8Url), "application/x-mpegURL")
+                putExtra("title", title)
+                // Supported by MX Player, VLC, Just Player, Next Player
+                putExtra(
+                    "headers",
+                    arrayOf(
+                        "Referer", source.referer,
+                        "User-Agent", ua
+                    )
+                )
+            }
+            startActivity(Intent.createChooser(intent, "Apri stream con"))
+        } catch (e: Exception) {
+            viewModel.showMessage("Nessun player esterno trovato per aprire lo stream")
         }
     }
 

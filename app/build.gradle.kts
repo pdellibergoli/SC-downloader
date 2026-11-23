@@ -21,9 +21,9 @@ android {
 
     val propVersionName = project.findProperty("appVersionName")?.toString()?.trim()?.removePrefix("v")
         ?.takeIf { it.isNotEmpty() }
-        ?: "1.0.2"
+        ?: "1.1.0"
     val propVersionCode = project.findProperty("appVersionCode")?.toString()?.toIntOrNull()
-        ?: 10002
+        ?: 10100
     val defaultGithubToken = (
         project.findProperty("githubToken")?.toString()?.trim()
             ?: System.getenv("APP_UPDATE_TOKEN")?.trim()
@@ -139,9 +139,13 @@ dependencies {
     // WorkManager for background Watchlist & Domain Recovery
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 
-    // Media3 (Playback & Muxer support)
+    // Media3 (Playback, HLS Streaming & Muxer support)
     val media3Version = "1.4.1"
     implementation("androidx.media3:media3-common:$media3Version")
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
+    implementation("androidx.media3:media3-datasource-okhttp:$media3Version")
     implementation("androidx.media3:media3-muxer:$media3Version")
     implementation("androidx.media3:media3-extractor:$media3Version")
 

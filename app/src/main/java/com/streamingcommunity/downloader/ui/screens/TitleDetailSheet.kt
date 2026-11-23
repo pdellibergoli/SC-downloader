@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -71,7 +72,9 @@ fun TitleDetailSheet(
     onSelectSeason: (Int) -> Unit,
     onToggleAudioLang: (String) -> Unit,
     onToggleSubtitleLang: (String) -> Unit,
+    onStreamFilm: () -> Unit,
     onDownloadFilm: () -> Unit,
+    onStreamEpisode: (EpisodeInfo) -> Unit,
     onDownloadEpisode: (EpisodeInfo) -> Unit,
     onDownloadWholeSeason: () -> Unit,
     onFollowSeries: () -> Unit
@@ -272,32 +275,55 @@ fun TitleDetailSheet(
             if (!state.title.isSeries && state.title.source == MediaSource.STREAMING_COMMUNITY) {
                 val filmJob = activeOrCompletedJobs.firstOrNull { it.mediaType == "movie" }
                 item {
-                    Button(
-                        onClick = onDownloadFilm,
-                        enabled = filmJob == null,
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 12.dp),
-                        shape = RoundedCornerShape(12.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Icon(
-                            imageVector = when {
-                                filmJob == null -> Icons.Default.Download
-                                filmJob.status == DownloadStatus.COMPLETED.name -> Icons.Default.CheckCircle
-                                else -> Icons.Default.Schedule
-                            },
-                            contentDescription = null
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = when {
-                                filmJob == null -> "Scarica Film"
-                                filmJob.status == DownloadStatus.COMPLETED.name -> "Film scaricato"
-                                filmJob.status == DownloadStatus.QUEUED.name -> "Film in coda"
-                                else -> "In download (${filmJob.progressPercent}%)"
-                            },
-                            fontWeight = FontWeight.Bold
-                        )
+                        Button(
+                            onClick = onStreamFilm,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Guarda ora",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = onDownloadFilm,
+                            enabled = filmJob == null,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = when {
+                                    filmJob == null -> Icons.Default.Download
+                                    filmJob.status == DownloadStatus.COMPLETED.name -> Icons.Default.CheckCircle
+                                    else -> Icons.Default.Schedule
+                                },
+                                contentDescription = null
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = when {
+                                    filmJob == null -> "Scarica Film"
+                                    filmJob.status == DownloadStatus.COMPLETED.name -> "Scaricato"
+                                    filmJob.status == DownloadStatus.QUEUED.name -> "In coda"
+                                    else -> "${filmJob.progressPercent}%"
+                                },
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             } else {
@@ -408,6 +434,7 @@ fun TitleDetailSheet(
                             episode = ep,
                             domain = domain,
                             existingJob = findJobForEpisode(ep),
+                            onStream = { onStreamEpisode(ep) },
                             onDownload = { onDownloadEpisode(ep) }
                         )
                     }
@@ -422,6 +449,7 @@ private fun EpisodeRowItem(
     episode: EpisodeInfo,
     domain: String,
     existingJob: DownloadJobEntity?,
+    onStream: () -> Unit,
     onDownload: () -> Unit
 ) {
     val stillUrl = HttpClientProvider.resolveImageUrl(episode.still, domain)
@@ -477,7 +505,15 @@ private fun EpisodeRowItem(
                 }
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+
+            IconButton(onClick = onStream) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "Guarda episodio in streaming",
+                    tint = AccentCyan
+                )
+            }
 
             when {
                 existingJob == null -> {
