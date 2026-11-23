@@ -585,7 +585,7 @@ class MainActivity : ComponentActivity() {
         try {
             val ua = HttpClientProvider.randomUserAgent()
             val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(Uri.parse(source.m3u8Url), "application/x-mpegURL")
+                setDataAndType(Uri.parse(source.m3u8Url), "video/*")
                 putExtra("title", title)
                 // Supported by MX Player, VLC, Just Player, Next Player
                 putExtra(

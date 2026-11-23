@@ -21,9 +21,9 @@ android {
 
     val propVersionName = project.findProperty("appVersionName")?.toString()?.trim()?.removePrefix("v")
         ?.takeIf { it.isNotEmpty() }
-        ?: "1.1.0"
+        ?: "1.1.1"
     val propVersionCode = project.findProperty("appVersionCode")?.toString()?.toIntOrNull()
-        ?: 10100
+        ?: 10101
     val defaultGithubToken = (
         project.findProperty("githubToken")?.toString()?.trim()
             ?: System.getenv("APP_UPDATE_TOKEN")?.trim()
