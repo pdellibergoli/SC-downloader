@@ -100,3 +100,13 @@ data class SeenEpisodeEntity(
     val episodeName: String? = null,
     val seenAtMs: Long = System.currentTimeMillis()
 )
+
+@Entity(tableName = "playback_progress")
+data class PlaybackProgressEntity(
+    @PrimaryKey
+    val mediaKey: String,
+    val positionMs: Long,
+    val durationMs: Long,
+    val updatedAtMs: Long = System.currentTimeMillis()
+)
+

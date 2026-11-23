@@ -23,6 +23,7 @@ import com.streamingcommunity.downloader.core.network.StreamingCommunityClient
 import com.streamingcommunity.downloader.core.network.UpdateCheckOutcome
 import com.streamingcommunity.downloader.core.network.VixcloudParser
 import com.streamingcommunity.downloader.data.DownloadJobEntity
+import com.streamingcommunity.downloader.data.PlaybackProgressEntity
 import com.streamingcommunity.downloader.data.WatchEntity
 import com.streamingcommunity.downloader.service.BackgroundWorkScheduler
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +73,8 @@ data class StreamingPlayerUiState(
     val seasonEpisodes: List<EpisodeInfo> = emptyList(),
     val preferredAudioLang: String? = null,
     val preferredSubtitleLang: String? = null,
+    val mediaKey: String = "",
+    val initialPositionMs: Long = 0L,
     val isLoading: Boolean = true,
     val streamSource: StreamSource? = null,
     val errorMessage: String? = null
@@ -564,11 +567,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _detailState.value = null
     }
 
+    private fun buildStreamingMediaKey(
+        title: MediaTitle,
+        season: Int?,
+        episode: EpisodeInfo?
+    ): String {
+        return if (episode != null) {
+            val epIdentifier = if (episode.id > 0) "id:${episode.id}" else "s${season ?: 1}e${episode.number}"
+            "${title.source.id}:ep:${title.id}:$epIdentifier"
+        } else {
+            "${title.source.id}:movie:${title.id}"
+        }
+    }
+
+    fun saveStreamingProgress(mediaKey: String, positionMs: Long, durationMs: Long) {
+        if (mediaKey.isBlank() || positionMs < 0L) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val nearEnd = durationMs > 0L && (
+                positionMs >= (durationMs * 0.96).toLong() ||
+                    (durationMs - positionMs) <= 15_000L
+                )
+            if (nearEnd) {
+                app.database.playbackProgressDao().deleteProgress(mediaKey)
+            } else if (positionMs >= 5_000L) {
+                app.database.playbackProgressDao().upsertProgress(
+                    PlaybackProgressEntity(
+                        mediaKey = mediaKey,
+                        positionMs = positionMs,
+                        durationMs = durationMs.coerceAtLeast(0L),
+                        updatedAtMs = System.currentTimeMillis()
+                    )
+                )
+            }
+        }
+    }
+
     fun streamFilmFromDetail() {
         val detail = _detailState.value ?: return
         val audioPref = detail.selectedAudioLanguages.firstOrNull()
         val subPref = detail.selectedSubtitleLanguages.firstOrNull()
         val yearLabel = detail.metadata.year ?: detail.title.year
+        val mediaKey = buildStreamingMediaKey(detail.title, season = null, episode = null)
 
         _streamingState.value = StreamingPlayerUiState(
             title = detail.title,
@@ -576,6 +615,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             subtitleText = yearLabel?.let { "Film ($it)" } ?: "Film",
             preferredAudioLang = audioPref,
             preferredSubtitleLang = subPref,
+            mediaKey = mediaKey,
             isLoading = true
         )
         resolveCurrentStreamingSource()
@@ -591,6 +631,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             "S%02dE%s • %s".format(detail.selectedSeason, episode.number.padStart(2, '0'), epTitle)
         }
+        val mediaKey = buildStreamingMediaKey(detail.title, season = detail.selectedSeason, episode = episode)
 
         _streamingState.value = StreamingPlayerUiState(
             title = detail.title,
@@ -601,6 +642,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             seasonEpisodes = detail.episodes,
             preferredAudioLang = audioPref,
             preferredSubtitleLang = subPref,
+            mediaKey = mediaKey,
             isLoading = true
         )
         resolveCurrentStreamingSource()
@@ -644,9 +686,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             "S%02dE%s • %s".format(season, targetEp.number.padStart(2, '0'), epTitle)
         }
+        val mediaKey = buildStreamingMediaKey(current.title, season = season, episode = targetEp)
         _streamingState.value = current.copy(
             subtitleText = subtitleLabel,
             currentEpisode = targetEp,
+            mediaKey = mediaKey,
+            initialPositionMs = 0L,
             isLoading = true,
             streamSource = null,
             errorMessage = null
@@ -666,6 +711,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         streamingResolveJob = viewModelScope.launch {
             try {
+                val savedProgress = withContext(Dispatchers.IO) {
+                    if (state.mediaKey.isNotBlank()) {
+                        runCatching { app.database.playbackProgressDao().getProgress(state.mediaKey) }.getOrNull()
+                    } else null
+                }
+                val resumePositionMs = savedProgress?.let { prog ->
+                    val nearEnd = prog.durationMs > 0L && (
+                        prog.positionMs >= (prog.durationMs * 0.96).toLong() ||
+                            (prog.durationMs - prog.positionMs) <= 15_000L
+                        )
+                    if (prog.positionMs > 5_000L && !nearEnd) prog.positionMs else 0L
+                } ?: 0L
+
                 val settings = settingsRepository.getSettings()
                 val source = when {
                     state.title.source == MediaSource.ANIME_UNITY -> {
@@ -713,6 +771,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 _streamingState.value = _streamingState.value?.copy(
                     isLoading = false,
+                    initialPositionMs = resumePositionMs,
                     streamSource = source,
                     errorMessage = null
                 )

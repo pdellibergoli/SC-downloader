@@ -8,6 +8,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Update
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import android.content.Context
 import kotlinx.coroutines.flow.Flow
 
@@ -119,22 +121,52 @@ interface WatchDao {
     suspend fun insertSeenEpisodes(episodes: List<SeenEpisodeEntity>)
 }
 
+@Dao
+interface PlaybackProgressDao {
+    @Query("SELECT * FROM playback_progress WHERE mediaKey = :mediaKey LIMIT 1")
+    suspend fun getProgress(mediaKey: String): PlaybackProgressEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertProgress(progress: PlaybackProgressEntity)
+
+    @Query("DELETE FROM playback_progress WHERE mediaKey = :mediaKey")
+    suspend fun deleteProgress(mediaKey: String)
+}
+
 @Database(
     entities = [
         DownloadJobEntity::class,
         WatchEntity::class,
-        SeenEpisodeEntity::class
+        SeenEpisodeEntity::class,
+        PlaybackProgressEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun downloadJobDao(): DownloadJobDao
     abstract fun watchDao(): WatchDao
+    abstract fun playbackProgressDao(): PlaybackProgressDao
 
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
+
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `playback_progress` (
+                        `mediaKey` TEXT NOT NULL,
+                        `positionMs` INTEGER NOT NULL,
+                        `durationMs` INTEGER NOT NULL,
+                        `updatedAtMs` INTEGER NOT NULL,
+                        PRIMARY KEY(`mediaKey`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
 
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -143,6 +175,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "sc_downloader.db"
                 )
+                    .addMigrations(MIGRATION_1_2)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

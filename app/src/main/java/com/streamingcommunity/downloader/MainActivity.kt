@@ -476,6 +476,7 @@ class MainActivity : ComponentActivity() {
                                 onRetry = viewModel::retryStreaming,
                                 onPlayPreviousEpisode = if (hasPrev) viewModel::playPreviousStreamingEpisode else null,
                                 onPlayNextEpisode = if (hasNext) viewModel::playNextStreamingEpisode else null,
+                                onSaveProgress = viewModel::saveStreamingProgress,
                                 onOpenExternalPlayer = { source ->
                                     openStreamInExternalPlayer(
                                         source = source,

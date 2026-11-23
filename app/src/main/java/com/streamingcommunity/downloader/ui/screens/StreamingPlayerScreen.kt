@@ -1,9 +1,12 @@
 package com.streamingcommunity.downloader.ui.screens
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -25,10 +28,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.SkipNext
@@ -49,7 +55,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -99,6 +107,7 @@ fun StreamingPlayerScreen(
     onRetry: () -> Unit,
     onPlayPreviousEpisode: (() -> Unit)?,
     onPlayNextEpisode: (() -> Unit)?,
+    onSaveProgress: (mediaKey: String, positionMs: Long, durationMs: Long) -> Unit,
     onOpenExternalPlayer: (StreamSource) -> Unit
 ) {
     BackHandler(onBack = onClose)
@@ -212,10 +221,13 @@ fun StreamingPlayerScreen(
                     ExoPlayerContainer(
                         context = context,
                         streamSource = streamSource,
+                        mediaKey = state.mediaKey,
+                        initialPositionMs = state.initialPositionMs,
                         preferredAudioLang = state.preferredAudioLang,
                         preferredSubtitleLang = state.preferredSubtitleLang,
                         pauseRequestCount = pauseRequestCount,
                         onControlsVisibilityChanged = { visible -> controlsVisible = visible },
+                        onSaveProgress = onSaveProgress,
                         onPlayerError = { msg -> playerError = msg }
                     )
                 }
@@ -338,19 +350,32 @@ fun StreamingPlayerScreen(
     }
 }
 
+@SuppressLint("ClickableViewAccessibility")
 @OptIn(UnstableApi::class)
 @Composable
 private fun ExoPlayerContainer(
     context: Context,
     streamSource: StreamSource,
+    mediaKey: String,
+    initialPositionMs: Long,
     preferredAudioLang: String?,
     preferredSubtitleLang: String?,
     pauseRequestCount: Int,
     onControlsVisibilityChanged: (Boolean) -> Unit,
+    onSaveProgress: (mediaKey: String, positionMs: Long, durationMs: Long) -> Unit,
     onPlayerError: (String) -> Unit
 ) {
     val ua = remember { HttpClientProvider.randomUserAgent() }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val currentMediaKey by rememberUpdatedState(mediaKey)
+    val currentOnSaveProgress by rememberUpdatedState(onSaveProgress)
+
+    var seekFeedbackDirection by remember { mutableIntStateOf(0) } // -1 rewind, 1 forward, 0 hidden
+    var seekFeedbackSeconds by remember { mutableIntStateOf(0) }
+    var seekFeedbackTrigger by remember { mutableIntStateOf(0) }
+    var showResumedBadge by remember(streamSource.m3u8Url, initialPositionMs) {
+        mutableStateOf(initialPositionMs > 0L)
+    }
 
     val exoPlayer = remember(streamSource.m3u8Url, streamSource.referer, streamSource.keyHex) {
         val preloadedKeyBytes = streamSource.keyHex
@@ -401,45 +426,114 @@ private fun ExoPlayerContainer(
             .setAllowChunklessPreparation(true)
             .createMediaSource(MediaItem.fromUri(streamSource.m3u8Url))
 
-        ExoPlayer.Builder(context).build().apply {
-            val paramsBuilder = trackSelectionParameters.buildUpon()
-            if (!preferredAudioLang.isNullOrBlank()) {
-                paramsBuilder.setPreferredAudioLanguage(preferredAudioLang)
-            }
-            if (!preferredSubtitleLang.isNullOrBlank()) {
-                paramsBuilder.setPreferredTextLanguage(preferredSubtitleLang)
-                paramsBuilder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-            }
-            trackSelectionParameters = paramsBuilder.build()
+        ExoPlayer.Builder(context)
+            .setSeekBackIncrementMs(10_000L)
+            .setSeekForwardIncrementMs(10_000L)
+            .build()
+            .apply {
+                val paramsBuilder = trackSelectionParameters.buildUpon()
+                if (!preferredAudioLang.isNullOrBlank()) {
+                    paramsBuilder.setPreferredAudioLanguage(preferredAudioLang)
+                }
+                if (!preferredSubtitleLang.isNullOrBlank()) {
+                    paramsBuilder.setPreferredTextLanguage(preferredSubtitleLang)
+                    paramsBuilder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                }
+                trackSelectionParameters = paramsBuilder.build()
 
-            setMediaSource(hlsMediaSource)
-            prepare()
-            playWhenReady = true
+                setMediaSource(hlsMediaSource)
+                if (initialPositionMs > 0L) {
+                    seekTo(initialPositionMs)
+                }
+                prepare()
+                playWhenReady = true
+            }
+    }
+
+    fun persistCurrentPosition(forceEnd: Boolean = false) {
+        val dur = exoPlayer.duration.takeIf { it != C.TIME_UNSET } ?: 0L
+        if (forceEnd) {
+            if (dur > 0L) {
+                currentOnSaveProgress(currentMediaKey, dur, dur)
+            }
+            return
+        }
+        val state = exoPlayer.playbackState
+        if (state == Player.STATE_READY || state == Player.STATE_BUFFERING) {
+            val pos = exoPlayer.currentPosition
+            if (pos >= 5_000L) {
+                currentOnSaveProgress(currentMediaKey, pos, dur)
+            }
         }
     }
 
     DisposableEffect(exoPlayer, lifecycleOwner) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
+                persistCurrentPosition()
                 onPlayerError(error.localizedMessage ?: "Errore ExoPlayer (${error.errorCodeName})")
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (!isPlaying) {
+                    persistCurrentPosition()
+                }
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) {
+                    persistCurrentPosition(forceEnd = true)
+                }
             }
         }
         val lifecycleObserver = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                persistCurrentPosition()
                 exoPlayer.pause()
             }
         }
         exoPlayer.addListener(listener)
         lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
         onDispose {
+            persistCurrentPosition()
             lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
             exoPlayer.removeListener(listener)
             exoPlayer.release()
         }
     }
 
+    // Periodically save streaming progress every 5 seconds during playback
+    LaunchedEffect(exoPlayer, mediaKey) {
+        while (true) {
+            delay(5_000L)
+            if (exoPlayer.playbackState == Player.STATE_READY && exoPlayer.isPlaying) {
+                val pos = exoPlayer.currentPosition
+                val dur = exoPlayer.duration.takeIf { it != C.TIME_UNSET } ?: 0L
+                currentOnSaveProgress(currentMediaKey, pos, dur)
+            }
+        }
+    }
+
+    // Auto-hide the seek feedback overlay after 800ms
+    LaunchedEffect(seekFeedbackTrigger) {
+        if (seekFeedbackTrigger > 0) {
+            delay(800L)
+            seekFeedbackDirection = 0
+            seekFeedbackSeconds = 0
+        }
+    }
+
+    // Auto-hide the "Ripreso da ..." badge after 3 seconds
+    LaunchedEffect(showResumedBadge) {
+        if (showResumedBadge) {
+            delay(3_000L)
+            showResumedBadge = false
+        }
+    }
+
     LaunchedEffect(pauseRequestCount) {
         if (pauseRequestCount > 0) {
+            persistCurrentPosition()
             exoPlayer.pause()
         }
     }
@@ -456,30 +550,169 @@ private fun ExoPlayerContainer(
         exoPlayer.trackSelectionParameters = paramsBuilder.build()
     }
 
-    AndroidView(
-        modifier = Modifier.fillMaxSize(),
-        factory = { ctx ->
-            PlayerView(ctx).apply {
-                player = exoPlayer
-                useController = true
-                setShowSubtitleButton(true)
-                setShowFastForwardButton(true)
-                setShowRewindButton(true)
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-                setControllerVisibilityListener(
-                    PlayerView.ControllerVisibilityListener { visibility ->
-                        onControlsVisibilityChanged(visibility == View.VISIBLE)
+    Box(modifier = Modifier.fillMaxSize()) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    player = exoPlayer
+                    useController = true
+                    controllerShowTimeoutMs = 5000
+                    controllerHideOnTouch = true
+                    controllerAutoShow = true
+                    setShowSubtitleButton(true)
+                    setShowFastForwardButton(true)
+                    setShowRewindButton(true)
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    setControllerVisibilityListener(
+                        PlayerView.ControllerVisibilityListener { visibility ->
+                            onControlsVisibilityChanged(visibility == View.VISIBLE)
+                        }
+                    )
+
+                    var lastDoubleTapSeekMs = 0L
+                    var lastDoubleTapSide = 0
+
+                    fun performSeekByTap(direction: Int) {
+                        val activePlayer = this@apply.player ?: return
+                        val currentPos = activePlayer.currentPosition
+                        val dur = activePlayer.duration
+                        val targetPos = if (direction < 0) {
+                            (currentPos - 10_000L).coerceAtLeast(0L)
+                        } else {
+                            val rawTarget = currentPos + 10_000L
+                            if (dur != C.TIME_UNSET && dur > 0L) rawTarget.coerceAtMost(dur) else rawTarget
+                        }
+                        activePlayer.seekTo(targetPos)
+                        if (seekFeedbackDirection == direction) {
+                            seekFeedbackSeconds += 10
+                        } else {
+                            seekFeedbackDirection = direction
+                            seekFeedbackSeconds = 10
+                        }
+                        seekFeedbackTrigger++
+                        lastDoubleTapSeekMs = System.currentTimeMillis()
+                        lastDoubleTapSide = direction
                     }
-                )
+
+                    val gestureDetector = GestureDetector(
+                        ctx,
+                        object : GestureDetector.SimpleOnGestureListener() {
+                            override fun onDown(e: MotionEvent): Boolean = true
+
+                            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                                if (System.currentTimeMillis() - lastDoubleTapSeekMs < 700L) {
+                                    return true
+                                }
+                                if (isControllerFullyVisible) {
+                                    hideController()
+                                } else {
+                                    showController()
+                                }
+                                return true
+                            }
+
+                            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                                val now = System.currentTimeMillis()
+                                val side = if (e.x < width / 2f) -1 else 1
+                                if (now - lastDoubleTapSeekMs < 700L && side == lastDoubleTapSide) {
+                                    performSeekByTap(side)
+                                    return true
+                                }
+                                return super.onSingleTapUp(e)
+                            }
+
+                            override fun onDoubleTap(e: MotionEvent): Boolean {
+                                val side = if (e.x < width / 2f) -1 else 1
+                                performSeekByTap(side)
+                                return true
+                            }
+                        }
+                    )
+
+                    setOnTouchListener { _, event ->
+                        gestureDetector.onTouchEvent(event)
+                        true
+                    }
+                }
+            },
+            update = { playerView ->
+                if (playerView.player !== exoPlayer) {
+                    playerView.player = exoPlayer
+                }
             }
-        },
-        update = { playerView ->
-            if (playerView.player !== exoPlayer) {
-                playerView.player = exoPlayer
+        )
+
+        // YouTube-style double-tap seek feedback indicator (left/right)
+        AnimatedVisibility(
+            visible = seekFeedbackDirection != 0,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(if (seekFeedbackDirection < 0) Alignment.CenterStart else Alignment.CenterEnd)
+                .padding(horizontal = 48.dp)
+        ) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.65f),
+                shape = CircleShape
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = if (seekFeedbackDirection < 0) Icons.Default.FastRewind else Icons.Default.FastForward,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (seekFeedbackDirection < 0) "-${seekFeedbackSeconds}s" else "+${seekFeedbackSeconds}s",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
-    )
+
+        // Subtle "Ripreso da MM:SS" indicator when resuming from saved position
+        AnimatedVisibility(
+            visible = showResumedBadge && initialPositionMs > 0L,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 84.dp)
+        ) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.72f),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text(
+                    text = "Ripreso da ${formatDurationMs(initialPositionMs)}",
+                    color = AccentCyan,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun formatDurationMs(ms: Long): String {
+    val totalSec = (ms / 1000L).coerceAtLeast(0L)
+    val hours = totalSec / 3600L
+    val minutes = (totalSec % 3600L) / 60L
+    val seconds = totalSec % 60L
+    return if (hours > 0L) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%02d:%02d".format(minutes, seconds)
+    }
 }
