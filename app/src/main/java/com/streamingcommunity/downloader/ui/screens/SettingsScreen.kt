@@ -45,7 +45,6 @@ import com.streamingcommunity.downloader.BuildConfig
 import com.streamingcommunity.downloader.core.model.AppSettings
 import com.streamingcommunity.downloader.core.model.AppUpdateInfo
 import com.streamingcommunity.downloader.core.naming.NamingEngine
-import com.streamingcommunity.downloader.core.network.AppUpdateManager
 import com.streamingcommunity.downloader.ui.theme.AccentCyan
 import kotlin.math.roundToInt
 
@@ -154,25 +153,15 @@ fun SettingsScreen(
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
-                    val hasBuiltIn = AppUpdateManager.hasBuiltInToken()
                     OutlinedTextField(
                         value = githubTokenInput,
                         onValueChange = { githubTokenInput = it },
-                        label = { Text("Token GitHub (per repo privato)") },
+                        label = { Text("Token GitHub (opzionale, per repo privato)") },
                         placeholder = {
-                            Text(
-                                if (hasBuiltIn) "Preconfigurato nella build (opzionale override)"
-                                else "ghp_... oppure github_pat_..."
-                            )
+                            Text("ghp_... oppure github_pat_...")
                         },
                         supportingText = {
-                            Text(
-                                if (hasBuiltIn && githubTokenInput.isBlank()) {
-                                    "Token preconfigurato attivo per pdellibergoli/SC-downloader"
-                                } else {
-                                    "Richiesto per leggere e scaricare le release dal repository privato"
-                                }
-                            )
+                            Text("Opzionale: necessario solo per aggiornamenti in-app da repository privato (in alternativa usa 'Apri pagina Releases' dal browser)")
                         },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()

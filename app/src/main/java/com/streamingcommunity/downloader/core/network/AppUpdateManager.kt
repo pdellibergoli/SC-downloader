@@ -1,6 +1,5 @@
 package com.streamingcommunity.downloader.core.network
 
-import com.streamingcommunity.downloader.BuildConfig
 import com.streamingcommunity.downloader.core.model.AppUpdateInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -36,13 +35,7 @@ object AppUpdateManager {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun resolveEffectiveToken(userToken: String = ""): String {
-        val cleanUser = userToken.trim()
-        if (cleanUser.isNotEmpty()) return cleanUser
-        return runCatching { BuildConfig.DEFAULT_GITHUB_TOKEN.trim() }.getOrDefault("")
-    }
-
-    fun hasBuiltInToken(): Boolean {
-        return runCatching { BuildConfig.DEFAULT_GITHUB_TOKEN.isNotBlank() }.getOrDefault(false)
+        return userToken.trim()
     }
 
     fun normalizeVersion(raw: String): String {

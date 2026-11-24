@@ -24,12 +24,6 @@ android {
         ?: "1.1.2"
     val propVersionCode = project.findProperty("appVersionCode")?.toString()?.toIntOrNull()
         ?: 10102
-    val defaultGithubToken = (
-        project.findProperty("githubToken")?.toString()?.trim()
-            ?: System.getenv("APP_UPDATE_TOKEN")?.trim()
-            ?: localProps.getProperty("github.token")?.trim()
-            ?: ""
-        ).replace("\"", "\\\"")
 
     defaultConfig {
         applicationId = "com.streamingcommunity.downloader"
@@ -37,8 +31,6 @@ android {
         targetSdk = 34
         versionCode = propVersionCode
         versionName = propVersionName
-
-        buildConfigField("String", "DEFAULT_GITHUB_TOKEN", "\"$defaultGithubToken\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
