@@ -180,14 +180,14 @@ class CoreLogicTest {
               "tag_name": "v1.1.0",
               "name": "SC Downloader v1.1.0",
               "body": "- Filtro Home Film/Serie/Anime\n- Check aggiornamenti in-app",
-              "html_url": "https://github.com/pdellibergoli/SC-downloader/releases/tag/v1.1.0",
+              "html_url": "https://github.com/pdellibergoli/SC-Cinema/releases/tag/v1.1.0",
               "published_at": "2026-11-09T12:00:00Z",
               "assets": [
                 {
-                  "url": "https://api.github.com/repos/pdellibergoli/SC-downloader/releases/assets/727207717",
+                  "url": "https://api.github.com/repos/pdellibergoli/SC-Cinema/releases/assets/727207717",
                   "name": "SC-Downloader-v1.1.0.apk",
                   "size": 15400123,
-                  "browser_download_url": "https://github.com/pdellibergoli/SC-downloader/releases/download/v1.1.0/SC-Downloader-v1.1.0.apk"
+                  "browser_download_url": "https://github.com/pdellibergoli/SC-Cinema/releases/download/v1.1.0/SC-Downloader-v1.1.0.apk"
                 }
               ]
             }
@@ -199,7 +199,7 @@ class CoreLogicTest {
         assertEquals("1.1.0", parsed.versionName)
         assertEquals("SC-Downloader-v1.1.0.apk", parsed.apkFileName)
         assertEquals(
-            "https://api.github.com/repos/pdellibergoli/SC-downloader/releases/assets/727207717",
+            "https://api.github.com/repos/pdellibergoli/SC-Cinema/releases/assets/727207717",
             parsed.apkDownloadUrl
         )
     }

@@ -27,7 +27,7 @@ sealed class UpdateCheckOutcome {
 object AppUpdateManager {
 
     const val GITHUB_OWNER = "pdellibergoli"
-    const val GITHUB_REPO = "SC-downloader"
+    const val GITHUB_REPO = "SC-Cinema"
     const val RELEASES_PAGE_URL = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO/releases"
     private const val LATEST_RELEASE_API_URL =
         "https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases/latest"
@@ -144,11 +144,7 @@ object AppUpdateManager {
 
             HttpClientProvider.sharedClient.newCall(reqBuilder.build()).execute().use { response ->
                 if (response.code == 404) {
-                    return@withContext if (token.isEmpty()) {
-                        UpdateCheckOutcome.Error("Repository privato: configura il Token GitHub nelle Impostazioni")
-                    } else {
-                        UpdateCheckOutcome.NoReleasesYet(currentVersion)
-                    }
+                    return@withContext UpdateCheckOutcome.NoReleasesYet(currentVersion)
                 }
                 if (response.code == 401 || response.code == 403) {
                     return@withContext UpdateCheckOutcome.Error("Token GitHub non valido o scaduto (HTTP ${response.code})")
